@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fuckup Nights San José - Pizarra Interactiva & Dashboard</title>
+  <meta name="description" content="Pizarra interactiva en vivo, confesiones de fracasos y dashboard de control para Fuckup Nights San José, Costa Rica." />
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body class="theme-fuckup">
+  <div id="app-root">
+    <!-- Top Global Header -->
+    <header class="top-nav-bar" id="global-navbar">
+      <div class="nav-left">
+        <a href="#" class="brand-link" id="nav-brand-link">
+          <img src="/logo.svg" alt="Fuckup Nights Logo" class="brand-logo" />
+          <div class="brand-text">
+            <span class="brand-title">FUCKUP NIGHTS</span>
+            <span class="brand-subtitle">SAN JOSÉ, CR</span>
+          </div>
+        </a>
+
+        <div class="live-status-pill">
+          <span class="live-dot"></span>
+          <span id="live-stories-count">Cargando pizarra...</span>
+        </div>
+      </div>
+
+      <div class="nav-center">
+        <nav class="view-switch-pills">
+          <button class="view-pill active" id="btn-view-board" data-view="board">
+            📺 Pizarra Flotante
+          </button>
+          <button class="view-pill" id="btn-view-cards" data-view="cards">
+            🃏 Tarjetas
+          </button>
+          <button class="view-pill" id="btn-view-memes" data-view="memes">
+            😂 Memes
+          </button>
+          <button class="view-pill" id="btn-view-adstudio" data-view="adstudio">
+            🎨 Ad Studio
+          </button>
+        </nav>
+      </div>
+
+      <div class="nav-right">
+        <button class="btn-nav-action btn-qr" id="btn-open-qr" title="Mostrar código QR para escanear con el móvil">
+          📱 QR Móvil
+        </button>
+
+        <button class="btn-nav-action btn-confess" id="btn-open-submission">
+          🔥 Confesar mi Cagada
+        </button>
+
+        <button class="btn-nav-action btn-admin-trigger" id="btn-open-admin" title="Panel de Administración (funcr)">
+          ⚙️ Admin
+        </button>
+
+        <button class="btn-icon btn-fullscreen" id="btn-toggle-fullscreen" title="Pantalla Completa para Proyector">
+          ⛶
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN VIEW 1: PIZARRA FLOTANTE -->
+    <main class="view-pane active" id="view-board">
+      <canvas id="particle-canvas" class="particle-canvas"></canvas>
+
+      <!-- Ambient Glows -->
+      <div class="ambient-glow glow-magenta"></div>
+      <div class="ambient-glow glow-cyan"></div>
+      <div class="ambient-glow glow-amber"></div>
+
+      <!-- Live Floating Swimming Area -->
+      <div class="swimming-space" id="swimming-container">
+        <!-- Floating cards are generated here -->
+      </div>
+
+      <!-- Quick Bottom Controls Bar -->
+      <div class="board-floating-toolbar">
+        <button class="toolbar-btn" id="btn-toggle-spotlight-cycle" title="Pausar o reanudar ciclo aleatorio de spotlight">
+          <span id="spotlight-cycle-icon">⏸️</span> <span id="spotlight-cycle-text">Spotlight Auto: Activo</span>
+        </button>
+        <button class="toolbar-btn" id="btn-board-speed-toggle" title="Cambiar velocidad de nado">
+          ⚡ Velocidad: <span id="board-speed-label">Normal</span>
+        </button>
+      </div>
+    </main>
+
+    <!-- MAIN VIEW 2: ADMIN DASHBOARD -->
+    <section class="view-pane" id="view-admin" style="display: none;">
+      <div id="admin-dashboard-container"></div>
+    </section>
+
+    <!-- MAIN VIEW 3: AD STUDIO -->
+    <section class="view-pane" id="view-adstudio" style="display: none;">
+      <div id="ad-studio-container"></div>
+    </section>
+
+    <!-- MAIN VIEW 4: CREADOR DE TARJETAS -->
+    <section class="view-pane tool-pane" id="view-cards" style="display: none;">
+      <div id="card-studio-container" style="width: 100%;"></div>
+    </section>
+
+    <!-- MAIN VIEW 5: BUSCADOR DE MEMES -->
+    <section class="view-pane tool-pane" id="view-memes" style="display: none;">
+      <div id="meme-finder-container" style="width: 100%;"></div>
+    </section>
+
+    <!-- MODAL 1: FULLSCREEN SPOTLIGHT MODAL -->
+    <div class="spotlight-modal-overlay" id="spotlight-modal">
+      <div class="spotlight-stage-wrap">
+        <div class="spotlight-card-box">
+          <div class="spotlight-top-controls">
+            <div class="spotlight-progress-track">
+              <div class="spotlight-progress-fill" id="spotlight-progress-fill"></div>
+            </div>
+            <button class="btn-close-spotlight" title="Cerrar y volver a la pizarra">&times;</button>
+          </div>
+          <div class="spotlight-body">
+            <!-- Spotlight story rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- 3D STREET SIGN TOTEM: EN EL LATERAL DERECHO DE LA PANTALLA (FUERA DEL CONTENEDOR) -->
+        <aside class="spotlight-street-signs-lateral" id="spotlight-street-signs-anchor">
+          <!-- Three.js 3D Street Sign Canvas se monta aquí -->
+        </aside>
+      </div>
+    </div>
+
+    <!-- MODAL 2: CONFESS YOUR FUCKUP (SUBMISSION FORM) -->
+    <div class="modal-backdrop" id="modal-submission">
+      <!-- Injected via SubmissionFormModal -->
+    </div>
+
+    <!-- MODAL 3: ADMIN AUTHENTICATION -->
+    <div class="modal-backdrop" id="modal-auth">
+      <!-- Injected via AdminAuth -->
+    </div>
+
+    <!-- MODAL 4: QR CODE AUDIENCE MODAL -->
+    <div class="modal-backdrop" id="modal-qr">
+      <!-- Injected via QrModal -->
+    </div>
+
+    <!-- MODAL 5: MEME & RECURSOS PICKER MODAL -->
+    <div class="modal-backdrop" id="modal-meme-picker">
+      <!-- Injected via MemePickerModal -->
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>

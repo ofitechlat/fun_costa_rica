@@ -1,0 +1,11 @@
+node_modules
+dist
+deploy
+deploy.zip
+data
+.vscode
+.DS_Store
+*.local
+*.zip
+recursos/memes_deephumor/*.txt
+recursos/memes_deephumor/memes900k/*.txt

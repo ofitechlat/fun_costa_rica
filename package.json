@@ -1,0 +1,33 @@
+{
+  "name": "fun-ad",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:server": "node app.cjs",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "setup": "node server/setup.cjs",
+    "start": "node app.cjs",
+    "package": "node scripts/package.cjs"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/qrcode": "^1.5.6",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.12"
+  },
+  "dependencies": {
+    "canvas-confetti": "^1.9.4",
+    "dom-to-image-more": "^3.7.2",
+    "express": "^4.21.2",
+    "html2canvas": "^1.4.1",
+    "qrcode": "^1.5.4",
+    "sql.js": "^1.14.1",
+    "three": "^0.186.1"
+  }
+}
