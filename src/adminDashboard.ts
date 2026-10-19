@@ -9,6 +9,7 @@ export class AdminDashboard {
   private onStoriesChanged?: () => void;
   private onTriggerSpotlight?: (story: Story) => void;
   private onEditStory?: (story: Story) => void;
+  private onCreateStory?: () => void;
   private onCloseDashboard?: () => void;
 
   private currentFilter: 'all' | 'approved' | 'pending' | 'video' = 'all';
@@ -21,6 +22,7 @@ export class AdminDashboard {
       onStoriesChanged?: () => void;
       onTriggerSpotlight?: (story: Story) => void;
       onEditStory?: (story: Story) => void;
+      onCreateStory?: () => void;
       onCloseDashboard?: () => void;
     }
   ) {
@@ -29,6 +31,7 @@ export class AdminDashboard {
     this.onStoriesChanged = callbacks.onStoriesChanged;
     this.onTriggerSpotlight = callbacks.onTriggerSpotlight;
     this.onEditStory = callbacks.onEditStory;
+    this.onCreateStory = callbacks.onCreateStory;
     this.onCloseDashboard = callbacks.onCloseDashboard;
   }
 
@@ -117,7 +120,7 @@ export class AdminDashboard {
 
               <div class="tab-actions-right">
                 <button class="btn-primary" id="btn-create-manual-story">
-                  + Nueva Historia Manual
+                  + Nueva Historia (foto / meme / 🎬 video)
                 </button>
               </div>
             </div>
@@ -540,6 +543,10 @@ export class AdminDashboard {
 
     // Create Manual Story Button
     this.container.querySelector('#btn-create-manual-story')?.addEventListener('click', () => {
+      if (this.onCreateStory) {
+        this.onCreateStory();
+        return;
+      }
       const title = prompt('Título o Frase de la Cagada:');
       if (!title) return;
       const content = prompt('Explicación de la historia:');

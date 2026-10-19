@@ -81,6 +81,7 @@ const SAMPLES: CardSample[] = [
 export class CardStudio {
   private container: HTMLElement;
   private imageUrl: string | null = null;
+  private videoUrl: string | null = null;
   private memes: Meme[] = [];
   private allStories: Story[] = [];
   private editingStoryId: string | null = null;
@@ -103,6 +104,12 @@ export class CardStudio {
     this.updatePreview();
   }
 
+  /** Abre el estudio con un formulario limpio (modo crear). */
+  public async startNew() {
+    this.editingStoryId = null;
+    await this.render();
+  }
+
   /** Pone el estudio en modo edición para una historia específica */
   public async editStory(story: Story) {
     this.editingStoryId = story.id;
@@ -119,6 +126,8 @@ export class CardStudio {
     if (this.memes.length === 0) {
       try { this.memes = await loadMemeCatalog(); } catch { this.memes = []; }
     }
+
+    if (!this.editingStoryId) { this.imageUrl = null; this.videoUrl = null; }
 
     try {
       this.allStories = await storage.getAllStories();
@@ -252,10 +261,15 @@ export class CardStudio {
                   ⬆️ Subir propia imagen
                 </label>
                 <input type="file" id="cs-file" accept="image/*" class="file-hidden" />
+                <label class="btn-tool-secondary" for="cs-video-file" id="cs-video-label">
+                  🎬 Subir video
+                </label>
+                <input type="file" id="cs-video-file" accept="video/*" class="file-hidden" />
                 <button type="button" class="btn-tool-ghost hidden" id="cs-remove-image">
-                  ✕ Quitar imagen
+                  ✕ Quitar imagen/video
                 </button>
               </div>
+              <div id="cs-video-status" class="empty-note" style="margin-top:8px;"></div>
               <div id="cs-meme-picker" class="meme-picker hidden"></div>
             </div>
 
@@ -426,8 +440,53 @@ export class CardStudio {
       }
     });
 
-    // Quitar imagen
-    this.q('#cs-remove-image')?.addEventListener('click', () => this.setImage(null));
+    // Subir video (se comprime en el navegador antes de guardarse)
+    this.q<HTMLInputElement>('#cs-video-file')?.addEventListener('change', async (e) => {
+      const input = e.target as HTMLInputElement;
+      const file = input.files?.[0];
+      if (!file) return;
+      const status = this.q('#cs-video-status');
+      const label = this.q('#cs-video-label');
+      label?.classList.add('disabled');
+      const saveBtn = this.q<HTMLButtonElement>('#cs-save');
+      if (saveBtn) saveBtn.disabled = true;
+      try {
+        const sizeMB = file.size / (1024 * 1024);
+        if (sizeMB <= 12 && /^video\/(mp4|webm)$/.test(file.type)) {
+          // Archivo liviano: se usa directo (la compresión corre en tiempo real y es lenta)
+          if (status) status.textContent = '⏳ Cargando video...';
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result as string);
+            r.onerror = () => reject(new Error('No se pudo leer el video'));
+            r.readAsDataURL(file);
+          });
+          this.setVideo(dataUrl);
+          if (status) status.textContent = `✅ Video listo (${sizeMB.toFixed(1)} MB)`;
+        } else {
+          const res = await MediaCompressor.compressVideo(file, (p) => {
+            if (status) status.textContent = `🎬 ${p.stage} ${Math.round(p.percent)}% — espera antes de guardar`;
+          });
+          this.setVideo(res.dataUrl);
+          if (status) status.textContent = `✅ Video listo (${res.compressedSizeMB} MB, ${Math.round(res.duration)} s)`;
+        }
+      } catch (err) {
+        if (status) status.textContent = '';
+        alert('Error procesando el video: ' + (err as Error).message);
+      } finally {
+        label?.classList.remove('disabled');
+        if (saveBtn) saveBtn.disabled = false;
+        input.value = '';
+      }
+    });
+
+    // Quitar imagen / video
+    this.q('#cs-remove-image')?.addEventListener('click', () => {
+      this.videoUrl = null;
+      const status = this.q('#cs-video-status');
+      if (status) status.textContent = '';
+      this.setImage(null);
+    });
 
     // Limpiar formulario
     this.q('#cs-clear')?.addEventListener('click', () => {
@@ -493,6 +552,7 @@ export class CardStudio {
     this.q<HTMLSelectElement>('#cs-category')!.value = s.category;
     this.q<HTMLTextAreaElement>('#cs-content')!.value = s.content;
     this.q<HTMLInputElement>('#cs-learnings')!.value = s.learnings;
+    this.videoUrl = null;
     this.setImage(s.memeFile ? `/memes/${s.memeFile}` : null);
     this.updatePreview();
 
@@ -503,6 +563,7 @@ export class CardStudio {
   private populateFormWithStory(story: Story) {
     this.editingStoryId = story.id;
     this.setImage(story.photoUrl || null);
+    this.setVideo(story.videoUrl || null);
 
     const titleEl = this.q<HTMLInputElement>('#cs-title');
     const catEl = this.q<HTMLSelectElement>('#cs-category');
@@ -551,7 +612,14 @@ export class CardStudio {
 
   private setImage(url: string | null) {
     this.imageUrl = url;
-    this.q('#cs-remove-image')?.classList.toggle('hidden', !url);
+    this.q('#cs-remove-image')?.classList.toggle('hidden', !url && !this.videoUrl);
+    this.updatePreview();
+  }
+
+  private setVideo(url: string | null) {
+    this.videoUrl = url;
+    if (url) this.imageUrl = null;
+    this.q('#cs-remove-image')?.classList.toggle('hidden', !url && !this.imageUrl);
     this.updatePreview();
   }
 
@@ -604,7 +672,9 @@ export class CardStudio {
     }
 
     preview.innerHTML = `
-      ${this.imageUrl ? `<div class="tp-image"><img src="${this.imageUrl}" alt="Imagen de la tarjeta" /></div>` : ''}
+      ${this.videoUrl
+        ? `<div class="tp-image"><video src="${this.videoUrl}" controls muted playsinline style="max-width:100%;max-height:280px;"></video></div>`
+        : (this.imageUrl ? `<div class="tp-image"><img src="${this.imageUrl}" alt="Imagen de la tarjeta" /></div>` : '')}
       <div class="tp-body">
         <div class="tp-top-row">
           <span class="tp-category">${escapeHtml(v.category)}</span>
@@ -651,10 +721,11 @@ export class CardStudio {
         linkedin: v.anonymous ? undefined : (v.linkedin || undefined),
         website: v.anonymous ? undefined : (v.website || undefined)
       },
-      mediaType: this.imageUrl ? 'photo' : 'text',
+      mediaType: this.videoUrl ? 'video' : (this.imageUrl ? 'photo' : 'text'),
       content: v.content,
       learnings: v.learnings || undefined,
       photoUrl: this.imageUrl || undefined,
+      videoUrl: this.videoUrl || undefined,
       status: isEdit && existing ? existing.status : (cfg.autoApprove ? 'approved' : 'pending'),
       likes: isEdit && existing ? existing.likes : 1,
       featured: isEdit && existing ? existing.featured : false

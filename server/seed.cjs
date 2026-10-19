@@ -53,6 +53,7 @@ function seedStories() {
       mediaType: 'video',
       content: 'Subí a tarima, el micrófono hizo un feedback ensordecedor que asustó al jurado, me puse tan nerviosa que olvidé el nombre de mi propia empresa y dije "Bueno, gracias por su tiempo" y me bajé corriendo.',
       learnings: 'Aprender a respirar, reírse del error en vivo y que el jurado también es humano.',
+      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
       status: 'approved', likes: 135
     }
   ];

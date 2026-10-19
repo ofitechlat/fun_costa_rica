@@ -48,6 +48,15 @@ async function open() {
   if (rows('SELECT COUNT(*) AS n FROM stories')[0].n === 0) {
     seedStories().forEach(upsertStory);
   }
+  // Migración: seed-5 es de tipo video pero se creó sin videoUrl
+  const s5 = rows("SELECT data FROM stories WHERE id = 'seed-5'")[0];
+  if (s5) {
+    const st = JSON.parse(s5.data);
+    if (st.mediaType === 'video' && !st.videoUrl) {
+      st.videoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+      upsertStory(st);
+    }
+  }
   persist();
   return db;
 }

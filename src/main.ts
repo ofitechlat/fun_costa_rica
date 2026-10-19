@@ -129,6 +129,10 @@ adminDashboard = new AdminDashboard(adminDashboardContainer, {
     switchView('cards');
     cardStudio.editStory(story);
   },
+  onCreateStory: () => {
+    switchView('cards');
+    cardStudio.startNew();
+  },
   onCloseDashboard: () => {
     switchView('board');
   }

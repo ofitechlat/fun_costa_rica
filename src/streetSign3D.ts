@@ -29,12 +29,35 @@ export class StreetSign3D {
   constructor(container: HTMLElement) {
     this.container = container;
     this.canvas = document.createElement('canvas');
+    this.mountCanvas();
+  }
+
+  /** Garantiza UN solo canvas dentro del contenedor (evita señales duplicadas). */
+  private mountCanvas() {
+    this.container.querySelectorAll('canvas.street-signs-3d-canvas').forEach(c => c.remove());
+    this.canvas = document.createElement('canvas');
     this.canvas.className = 'street-signs-3d-canvas';
     this.container.appendChild(this.canvas);
   }
 
+  /** Encuadra cámara según el aspecto: el poste + placas (x ≈ -0.7 … 1.95) siempre caben completos. */
+  private frameCamera(width: number, height: number) {
+    if (!this.camera) return;
+    const aspect = width / height;
+    const tan = Math.tan((this.camera.fov * Math.PI / 180) / 2);
+    const neededH = 4.5;  // alto del poste + margen
+    const neededW = 3.15; // ancho poste + placas + giro
+    const dist = Math.max(neededH / (2 * tan), neededW / (aspect * 2 * tan));
+    const cx = 0.62;      // centro horizontal del conjunto
+    this.camera.aspect = aspect;
+    this.camera.position.set(cx, 0.05, dist);
+    this.camera.lookAt(cx, 0, 0);
+    this.camera.updateProjectionMatrix();
+  }
+
   public render(author: AuthorInfo) {
     this.destroy();
+    this.mountCanvas();
     this.isDestroyed = false;
 
     const items: SignItem[] = [];
@@ -124,9 +147,7 @@ export class StreetSign3D {
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 100);
-    // Camera position framed to keep pole and plates completely centered with generous margin
-    this.camera.position.set(0.1, 0.05, 5.8);
-    this.camera.lookAt(0.1, 0, 0);
+    this.frameCamera(width, height);
 
     try {
       this.renderer = new THREE.WebGLRenderer({
@@ -170,7 +191,7 @@ export class StreetSign3D {
     this.scene.add(this.poleGroup);
 
     // Metallic Street Pole
-    const poleHeight = 4.8;
+    const poleHeight = 3.7;
     const poleRadius = 0.052;
     const poleGeo = new THREE.CylinderGeometry(poleRadius, poleRadius, poleHeight, 32);
     const poleMat = new THREE.MeshStandardMaterial({
@@ -182,12 +203,7 @@ export class StreetSign3D {
     poleMesh.position.set(0, 0, 0);
     this.poleGroup.add(poleMesh);
 
-    // Decorative Flanged Pedestal Base at bottom of pole
-    const baseGeo = new THREE.CylinderGeometry(0.24, 0.32, 0.22, 32);
-    const baseMat = new THREE.MeshStandardMaterial({ color: 0x22242e, metalness: 0.95, roughness: 0.2 });
-    const baseMesh = new THREE.Mesh(baseGeo, baseMat);
-    baseMesh.position.set(0, -poleHeight / 2 + 0.11, 0);
-    this.poleGroup.add(baseMesh);
+    // (Sin pedestal oscuro: se elimina el bloque negro de la base)
 
     // Decorative Glowing Finial Sphere at top of pole
     const finialGeo = new THREE.SphereGeometry(0.12, 32, 32);
@@ -284,8 +300,7 @@ export class StreetSign3D {
         if (!this.container || !this.renderer || !this.camera) return;
         const w = this.container.clientWidth || 400;
         const h = this.container.clientHeight || 650;
-        this.camera.aspect = w / h;
-        this.camera.updateProjectionMatrix();
+        this.frameCamera(w, h);
         this.renderer.setSize(w, h, false);
       });
       this.resizeObserver.observe(this.container);
@@ -397,7 +412,7 @@ export class StreetSign3D {
     ctx.stroke();
 
     // Icono Emoji / Símbolo centrado en el badge
-    ctx.font = 'bold 110px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    ctx.font = 'bold 140px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -418,23 +433,29 @@ export class StreetSign3D {
     if (item.sublabel) {
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
-      ctx.font = '800 44px "Outfit", "Inter", sans-serif';
+      ctx.font = '800 58px "Outfit", "Inter", sans-serif';
       ctx.fillStyle = item.color || '#ff006e';
-      ctx.fillText(item.sublabel.toUpperCase(), textStartX, 126);
+      ctx.fillText(item.sublabel.toUpperCase(), textStartX, 112);
     }
 
-    // Texto principal (Nombre, Handle, URL)
-    ctx.font = '900 86px "Outfit", "Inter", sans-serif';
-    ctx.fillStyle = '#ffffff';
+    // Texto principal (Nombre, Handle, URL) - más grande, se ajusta al ancho disponible
     let displayText = item.label;
-    if (displayText.length > 25) displayText = displayText.substring(0, 23) + '...';
+    if (displayText.length > 28) displayText = displayText.substring(0, 26) + '...';
+    const maxTextW = canvas.width - 150 - textStartX - 60;
+    let fontPx = 118;
+    ctx.font = `900 ${fontPx}px "Outfit", "Inter", sans-serif`;
+    while (ctx.measureText(displayText).width > maxTextW && fontPx > 56) {
+      fontPx -= 4;
+      ctx.font = `900 ${fontPx}px "Outfit", "Inter", sans-serif`;
+    }
+    ctx.fillStyle = '#ffffff';
 
     // Sombra de texto para máxima legibilidad
     ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = 12;
     ctx.shadowOffsetX = 3;
     ctx.shadowOffsetY = 4;
-    ctx.fillText(displayText, textStartX, 248);
+    ctx.fillText(displayText, textStartX, 270);
     ctx.shadowColor = 'transparent';
 
     // Flecha / Chevron reflectivo de dirección a la derecha
@@ -500,6 +521,9 @@ export class StreetSign3D {
     if (this.renderer) {
       this.renderer.dispose();
       this.renderer = null;
+    }
+    if (this.canvas && this.canvas.parentNode) {
+      this.canvas.parentNode.removeChild(this.canvas);
     }
     this.scene = null;
     this.camera = null;

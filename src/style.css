@@ -619,8 +619,8 @@ html, body {
 
 /* Espacio lateral derecho exclusivo para la señal 3D (fuera del contenedor) */
 .spotlight-street-signs-lateral {
-  width: 400px;
-  max-width: 420px;
+  width: 540px;
+  max-width: 560px;
   height: 100%;
   max-height: 94vh;
   flex-shrink: 0;
@@ -628,7 +628,7 @@ html, body {
   align-items: center;
   justify-content: center;
   position: relative;
-  filter: drop-shadow(0 25px 50px rgba(0, 0, 0, 0.95));
+  filter: none;
   z-index: 25;
 }
 
@@ -786,27 +786,27 @@ html, body {
 }
 
 .spotlight-main-title {
-  font-size: clamp(22px, 2.5vw, 36px);
+  font-size: clamp(26px, 2.9vw, 44px);
   font-weight: 900;
   line-height: 1.15;
   color: var(--text-white);
   text-transform: uppercase;
   margin: 0;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
 .spotlight-story-content {
-  font-size: clamp(15px, 1.3vw, 19px);
+  font-size: clamp(18px, 1.6vw, 24px);
   line-height: 1.5;
   color: #e5e7eb;
   border-left: 4px solid var(--primary);
   padding-left: 18px;
   margin: 0;
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -829,7 +829,7 @@ html, body {
 }
 
 .learnings-text {
-  font-size: clamp(13px, 1.15vw, 16px);
+  font-size: clamp(16px, 1.4vw, 21px);
   font-weight: 500;
   color: #fff;
   line-height: 1.35;
@@ -864,8 +864,8 @@ html, body {
    ========================================================= */
 .spotlight-street-signs-lateral,
 .spotlight-street-signs-anchor {
-  width: 400px;
-  max-width: 420px;
+  width: 540px;
+  max-width: 560px;
   height: 100%;
   max-height: 94vh;
   display: flex;
@@ -874,7 +874,7 @@ html, body {
   position: relative;
   z-index: 100;
   pointer-events: none;
-  filter: drop-shadow(0 25px 50px rgba(0, 0, 0, 0.95));
+  filter: none;
 }
 
 .street-signs-3d-canvas {
