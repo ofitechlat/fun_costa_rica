@@ -113,9 +113,11 @@ function createApp() {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '80mb' }));
 
-  app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'fun-costa-rica' }));
+  const router = express.Router();
 
-  app.post('/api/login', (req, res) => {
+  router.get('/health', (_req, res) => res.json({ ok: true, app: 'fun-costa-rica' }));
+
+  router.post('/login', (req, res) => {
     const { user, pass } = req.body || {};
     if (String(user || '').trim() === ADMIN_USER && String(pass || '').trim() === ADMIN_PASS) {
       return res.json({ token: makeToken() });
@@ -123,7 +125,7 @@ function createApp() {
     res.status(401).json({ error: 'Credenciales incorrectas' });
   });
 
-  app.get('/api/config', async (_req, res) => {
+  router.get('/config', async (_req, res) => {
     try {
       res.json(await db.getConfig());
     } catch (e) {
@@ -131,7 +133,7 @@ function createApp() {
     }
   });
 
-  app.put('/api/config', requireAdmin, async (req, res) => {
+  router.put('/config', requireAdmin, async (req, res) => {
     try {
       res.json(await db.saveConfig(req.body || {}));
     } catch (e) {
@@ -139,7 +141,7 @@ function createApp() {
     }
   });
 
-  app.get('/api/stories', async (req, res) => {
+  router.get('/stories', async (req, res) => {
     try {
       const all = await db.getAllStories();
       res.json(isAdmin(req) ? all : all.filter(s => s.status === 'approved'));
@@ -148,7 +150,7 @@ function createApp() {
     }
   });
 
-  app.post('/api/stories', async (req, res) => {
+  router.post('/stories', async (req, res) => {
     try {
       const cfg = await db.getConfig();
       const story = sanitizeStory(req.body || {}, isAdmin(req), undefined, cfg.autoApprove);
@@ -159,7 +161,7 @@ function createApp() {
     }
   });
 
-  app.put('/api/stories/:id', async (req, res) => {
+  router.put('/stories/:id', async (req, res) => {
     try {
       const existing = await db.getStory(req.params.id);
       const cfg = await db.getConfig();
@@ -173,7 +175,7 @@ function createApp() {
     }
   });
 
-  app.delete('/api/stories/:id', requireAdmin, async (req, res) => {
+  router.delete('/stories/:id', requireAdmin, async (req, res) => {
     try {
       const existing = await db.getStory(req.params.id);
       removeUploads(existing);
@@ -184,7 +186,7 @@ function createApp() {
     }
   });
 
-  app.post('/api/admin/reset', requireAdmin, async (_req, res) => {
+  router.post('/admin/reset', requireAdmin, async (_req, res) => {
     try {
       const all = await db.getAllStories();
       all.forEach(removeUploads);
@@ -195,7 +197,9 @@ function createApp() {
     }
   });
 
-  app.use('/api', (_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
+  // Montado tanto en /api como en raíz para compatibilidad universal con Vercel rewrites y dev local
+  app.use('/api', router);
+  app.use('/', router);
 
   app.use('/uploads', express.static(db.UPLOADS_DIR, { maxAge: '7d' }));
 
