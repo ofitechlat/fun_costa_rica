@@ -245,12 +245,7 @@ class StorageManager {
   }
 
   private async checkSeedData(): Promise<void> {
-    const stories = await this.localGetAll();
-    if (stories.length === 0) {
-      for (const s of SEED_STORIES) {
-        await this.localSave(s);
-      }
-    }
+    // No reinyectar historias borradas localmente si ya hay servidor activo
   }
 
   private async localGetAll(): Promise<Story[]> {
@@ -277,14 +272,19 @@ class StorageManager {
   }
 
   // ---------- Historias ----------
-  /** Obtiene todas las historias: siempre intenta consultar la API primero */
+  /** Obtiene todas las historias: siempre intenta consultar la API primero y sincroniza el caché */
   async getAllStories(): Promise<Story[]> {
     try {
       const list = await this.api<Story[]>('/api/stories');
       this.isServerOnline = true;
       try {
         await this.idb();
-        for (const s of list) await this.localSave(s);
+        if (this.db) {
+          const tx = this.db.transaction(STORE_STORIES, 'readwrite');
+          const store = tx.objectStore(STORE_STORIES);
+          store.clear();
+          for (const s of list) store.put(s);
+        }
       } catch {}
       return list;
     } catch (err) {
