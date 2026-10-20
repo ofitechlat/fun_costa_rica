@@ -1,11 +1,33 @@
-// Base de datos SQLite universal para FuN Costa Rica:
-// 1. En Vercel / Cloud: usa Turso (libSQL) remoto cuando TURSO_DATABASE_URL está configurado.
-//    Permite que múltiples usuarios compartan la misma base de datos en tiempo real.
-// 2. En local / hosting tradicional: usa sql.js (WebAssembly SQLite) guardando en data/fun.db.
+// Adaptador de Base de Datos para FuN Costa Rica:
+// 1. Supabase (PostgreSQL en la nube): Si SUPABASE_URL y SUPABASE_KEY están configurados.
+//    Permite sincronización multiusuario en tiempo real en Vercel y proyector.
+// 2. Turso (libSQL): Si TURSO_DATABASE_URL está configurado.
+// 3. SQLite Local (sql.js / fun.db): Si no hay internet o no hay credenciales (modo offline).
 
 const fs = require('fs');
 const path = require('path');
 const { seedStories, DEFAULT_CONFIG } = require('./seed.cjs');
+
+// Carga automática de .env si existe (sin dependencias externas)
+const envPath = path.join(__dirname, '..', '.env');
+if (fs.existsSync(envPath)) {
+  try {
+    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const idx = trimmed.indexOf('=');
+      if (idx > 0) {
+        const k = trimmed.slice(0, idx).trim();
+        const v = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (!process.env[k]) process.env[k] = v;
+      }
+    }
+  } catch {}
+}
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qzkzpgnvgvxvyuyzmpzf.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
 
 const TURSO_URL = process.env.TURSO_DATABASE_URL;
 const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
@@ -14,7 +36,8 @@ const DATA_DIR = process.env.DATA_DIR || (process.env.VERCEL ? '/tmp' : path.joi
 const DB_FILE = path.join(DATA_DIR, 'fun.db');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
-let isTurso = false;
+let mode = 'local'; // 'supabase' | 'turso' | 'local'
+let sbClient = null;
 let tursoClient = null;
 let localDb = null;
 
@@ -33,13 +56,13 @@ const SCHEMA_STMTS = [
 ];
 
 function persist() {
-  if (isTurso || !localDb) return;
+  if (mode !== 'local' || !localDb) return;
   try {
     const tmp = DB_FILE + '.tmp';
     fs.writeFileSync(tmp, Buffer.from(localDb.export()));
     fs.renameSync(tmp, DB_FILE);
   } catch (err) {
-    console.warn('Error al persistir archivo local fun.db:', err.message);
+    console.warn('Error persistiendo archivo fun.db local:', err.message);
   }
 }
 
@@ -54,72 +77,67 @@ function rows(sql, params = []) {
 }
 
 async function open() {
-  if (TURSO_URL) {
+  // 1. SUPABASE (Prioridad 1)
+  if (SUPABASE_URL && SUPABASE_KEY) {
     try {
-      const { createClient } = require('@libsql/client');
-      tursoClient = createClient({
-        url: TURSO_URL,
-        authToken: TURSO_TOKEN
+      const { createClient } = require('@supabase/supabase-js');
+      sbClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
+        auth: { persistSession: false }
       });
-      isTurso = true;
-      console.log('🔗 Conectado a base de datos SQLite en la nube (Turso / libSQL)');
 
-      for (const sql of SCHEMA_STMTS) {
-        await tursoClient.execute(sql);
-      }
+      // Validamos si la tabla stories existe en Supabase
+      const testRes = await sbClient.from('stories').select('id').limit(1);
+      if (!testRes.error) {
+        mode = 'supabase';
+        console.log('⚡ Conectado exitosamente a Supabase (PostgreSQL en la nube)');
 
-      const countRes = await tursoClient.execute('SELECT COUNT(*) AS n FROM stories');
-      const count = Number(countRes.rows[0]?.n || 0);
-      if (count === 0) {
-        console.log('🌱 Inicializando historias semilla en Turso...');
-        for (const s of seedStories()) {
-          await saveStory(s);
+        // Contar historias y cargar seed si está vacía
+        const countRes = await sbClient.from('stories').select('id', { count: 'exact' });
+        if (!countRes.error && (countRes.count === 0 || countRes.data.length === 0)) {
+          console.log('🌱 Inicializando historias semilla en Supabase...');
+          for (const s of seedStories()) {
+            await saveStory(s);
+          }
         }
+        return sbClient;
+      } else {
+        console.warn('⚠️ Supabase respondió con error (¿Faltan ejecutar las tablas en SQL Editor?):', testRes.error.message);
+        console.log('👉 Se usará SQLite local de respaldo mientras se crean las tablas en Supabase.');
       }
-
-      // Migración para seed-5
-      const s5Res = await tursoClient.execute({ sql: "SELECT data FROM stories WHERE id = 'seed-5'", args: [] });
-      if (s5Res.rows.length > 0) {
-        const st = JSON.parse(s5Res.rows[0].data);
-        if (st.mediaType === 'video' && !st.videoUrl) {
-          st.videoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-          await saveStory(st);
-        }
-      }
-
-      return tursoClient;
     } catch (err) {
-      console.error('❌ Error conectando a Turso, recurriendo a SQLite local:', err.message);
-      isTurso = false;
-      tursoClient = null;
+      console.warn('⚠️ No se pudo inicializar cliente de Supabase:', err.message);
     }
   }
 
-  // Modo local offline con sql.js
+  // 2. TURSO (Prioridad 2)
+  if (TURSO_URL) {
+    try {
+      const { createClient } = require('@libsql/client');
+      tursoClient = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN });
+      for (const sql of SCHEMA_STMTS) {
+        await tursoClient.execute(sql);
+      }
+      mode = 'turso';
+      console.log('🔗 Conectado a Turso SQLite en la nube');
+      return tursoClient;
+    } catch (err) {
+      console.warn('Error en Turso:', err.message);
+    }
+  }
+
+  // 3. SQLITE LOCAL (Respaldo universal offline)
   try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch {}
   const initSqlJs = require('sql.js');
   const SQL = await initSqlJs();
   localDb = fs.existsSync(DB_FILE) ? new SQL.Database(fs.readFileSync(DB_FILE)) : new SQL.Database();
-  
   for (const sql of SCHEMA_STMTS) {
     localDb.run(sql);
   }
-
   if (rows('SELECT COUNT(*) AS n FROM stories')[0].n === 0) {
     seedStories().forEach(upsertStoryLocal);
   }
-
-  // Migración local para seed-5
-  const s5 = rows("SELECT data FROM stories WHERE id = 'seed-5'")[0];
-  if (s5) {
-    const st = JSON.parse(s5.data);
-    if (st.mediaType === 'video' && !st.videoUrl) {
-      st.videoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-      upsertStoryLocal(st);
-    }
-  }
-
   persist();
+  mode = 'local';
   console.log('💾 Conectado a base de datos SQLite local (sql.js / fun.db)');
   return localDb;
 }
@@ -132,58 +150,104 @@ function upsertStoryLocal(story) {
 }
 
 async function saveStory(story) {
-  if (isTurso && tursoClient) {
+  if (mode === 'supabase' && sbClient) {
+    const { error } = await sbClient.from('stories').upsert({
+      id: story.id,
+      created_at: Number(story.createdAt) || Date.now(),
+      status: story.status,
+      data: story
+    }, { onConflict: 'id' });
+    if (error) throw new Error(error.message);
+    return;
+  }
+
+  if (mode === 'turso' && tursoClient) {
     await tursoClient.execute({
       sql: 'INSERT OR REPLACE INTO stories (id, created_at, status, data) VALUES (?, ?, ?, ?)',
       args: [story.id, story.createdAt, story.status, JSON.stringify(story)]
     });
     return;
   }
+
   upsertStoryLocal(story);
   persist();
 }
 
 async function getAllStories() {
-  if (isTurso && tursoClient) {
+  if (mode === 'supabase' && sbClient) {
+    const { data, error } = await sbClient
+      .from('stories')
+      .select('data')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data || []).map(r => r.data);
+  }
+
+  if (mode === 'turso' && tursoClient) {
     const res = await tursoClient.execute('SELECT data FROM stories ORDER BY created_at DESC');
     return res.rows.map(r => JSON.parse(String(r.data)));
   }
+
   return rows('SELECT data FROM stories ORDER BY created_at DESC').map(r => JSON.parse(r.data));
 }
 
 async function getStory(id) {
-  if (isTurso && tursoClient) {
+  if (mode === 'supabase' && sbClient) {
+    const { data, error } = await sbClient
+      .from('stories')
+      .select('data')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data ? data.data : null;
+  }
+
+  if (mode === 'turso' && tursoClient) {
     const res = await tursoClient.execute({
       sql: 'SELECT data FROM stories WHERE id = ?',
       args: [id]
     });
     return res.rows[0] ? JSON.parse(String(res.rows[0].data)) : null;
   }
+
   const r = rows('SELECT data FROM stories WHERE id = ?', [id])[0];
   return r ? JSON.parse(r.data) : null;
 }
 
 async function deleteStory(id) {
-  if (isTurso && tursoClient) {
-    await tursoClient.execute({
-      sql: 'DELETE FROM stories WHERE id = ?',
-      args: [id]
-    });
+  if (mode === 'supabase' && sbClient) {
+    const { error } = await sbClient.from('stories').delete().eq('id', id);
+    if (error) throw new Error(error.message);
     return;
   }
+
+  if (mode === 'turso' && tursoClient) {
+    await tursoClient.execute({ sql: 'DELETE FROM stories WHERE id = ?', args: [id] });
+    return;
+  }
+
   if (!localDb) return;
   localDb.run('DELETE FROM stories WHERE id = ?', [id]);
   persist();
 }
 
 async function resetStories() {
-  if (isTurso && tursoClient) {
+  if (mode === 'supabase' && sbClient) {
+    await sbClient.from('stories').delete().neq('id', '');
+    for (const s of seedStories()) {
+      await saveStory(s);
+    }
+    return;
+  }
+
+  if (mode === 'turso' && tursoClient) {
     await tursoClient.execute('DELETE FROM stories');
     for (const s of seedStories()) {
       await saveStory(s);
     }
     return;
   }
+
   if (!localDb) return;
   localDb.run('DELETE FROM stories');
   seedStories().forEach(upsertStoryLocal);
@@ -191,7 +255,17 @@ async function resetStories() {
 }
 
 async function getConfig() {
-  if (isTurso && tursoClient) {
+  if (mode === 'supabase' && sbClient) {
+    const { data, error } = await sbClient
+      .from('config')
+      .select('value')
+      .eq('key', 'board')
+      .maybeSingle();
+    if (error || !data) return { ...DEFAULT_CONFIG };
+    return { ...DEFAULT_CONFIG, ...(data.value || {}) };
+  }
+
+  if (mode === 'turso' && tursoClient) {
     const res = await tursoClient.execute("SELECT value FROM config WHERE key = 'board'");
     const r = res.rows[0];
     try {
@@ -200,6 +274,7 @@ async function getConfig() {
       return { ...DEFAULT_CONFIG };
     }
   }
+
   const r = rows("SELECT value FROM config WHERE key = 'board'")[0];
   try {
     return { ...DEFAULT_CONFIG, ...(r ? JSON.parse(r.value) : {}) };
@@ -213,13 +288,24 @@ async function saveConfig(cfg) {
   for (const k of Object.keys(DEFAULT_CONFIG)) {
     clean[k] = cfg[k] !== undefined ? cfg[k] : DEFAULT_CONFIG[k];
   }
-  if (isTurso && tursoClient) {
+
+  if (mode === 'supabase' && sbClient) {
+    const { error } = await sbClient.from('config').upsert({
+      key: 'board',
+      value: clean
+    }, { onConflict: 'key' });
+    if (error) throw new Error(error.message);
+    return clean;
+  }
+
+  if (mode === 'turso' && tursoClient) {
     await tursoClient.execute({
       sql: "INSERT OR REPLACE INTO config (key, value) VALUES ('board', ?)",
       args: [JSON.stringify(clean)]
     });
     return clean;
   }
+
   if (localDb) {
     localDb.run("INSERT OR REPLACE INTO config (key, value) VALUES ('board', ?)", [JSON.stringify(clean)]);
     persist();

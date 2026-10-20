@@ -9,3 +9,4 @@ data
 *.zip
 recursos/memes_deephumor/*.txt
 recursos/memes_deephumor/memes900k/*.txt
+.env
