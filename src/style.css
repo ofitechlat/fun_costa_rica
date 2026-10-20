@@ -748,6 +748,63 @@ html, body {
   display: block;
 }
 
+/* =========================================================
+   MEME / FOTO COMO FONDO DE PANTALLA EN SPOTLIGHT
+   (Mantiene el layout espacioso de 1 columna igual a texto puro)
+   ========================================================= */
+.spotlight-card-backdrop {
+  position: absolute;
+  top: -60px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+  pointer-events: none;
+  filter: saturate(1.15) brightness(0.9);
+  transform: scale(1.02);
+}
+
+.spotlight-backdrop-overlay {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 65% 45%, rgba(13, 13, 20, 0.70) 0%, rgba(7, 7, 12, 0.92) 80%),
+              linear-gradient(135deg, rgba(13, 13, 20, 0.88) 0%, rgba(7, 7, 12, 0.75) 50%, rgba(7, 7, 12, 0.92) 100%);
+  backdrop-filter: blur(2.5px);
+}
+
+.spotlight-tv-layout.has-backdrop-photo {
+  position: relative;
+  z-index: 2;
+}
+
+.spotlight-tv-layout.has-backdrop-photo .spotlight-main-title {
+  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.95), 0 0 25px rgba(0, 0, 0, 0.85);
+}
+
+.spotlight-tv-layout.has-backdrop-photo .spotlight-story-content {
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.92);
+  background: rgba(13, 13, 20, 0.55);
+  padding: 14px 20px;
+  border-radius: 0 14px 14px 0;
+  backdrop-filter: blur(4px);
+}
+
+.spotlight-tv-layout.has-backdrop-photo .spotlight-learnings-box {
+  background: rgba(20, 16, 8, 0.82);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 190, 11, 0.55);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.spotlight-cat-tag.photo-pill {
+  background: rgba(255, 0, 110, 0.15);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .spotlight-info-column {
   width: 100%;
   height: 100%;
@@ -881,6 +938,60 @@ html, body {
   width: 100% !important;
   height: 100% !important;
   display: block;
+}
+
+/* =========================================================
+   OPTIMIZACIÓN PARA TELEVISORES Y PANTALLAS CON FORMATO 1:1 O CUADRADO
+   ========================================================= */
+@media (max-aspect-ratio: 1.35/1) {
+  .spotlight-stage-wrap {
+    width: 96vw;
+    gap: 16px;
+  }
+  .spotlight-street-signs-lateral,
+  .spotlight-street-signs-anchor {
+    width: clamp(240px, 30vw, 360px);
+    max-width: 360px;
+  }
+  .spotlight-card-box {
+    max-width: none;
+    flex: 1;
+  }
+  .spotlight-body {
+    padding: 22px 28px;
+  }
+  .spotlight-main-title {
+    font-size: clamp(22px, 3.2vw, 36px);
+    -webkit-line-clamp: 4;
+  }
+  .spotlight-story-content {
+    font-size: clamp(16px, 1.8vw, 21px);
+    -webkit-line-clamp: 5;
+  }
+  .spotlight-tv-layout.has-media {
+    grid-template-columns: minmax(260px, 45%) 1fr;
+    gap: 20px;
+  }
+}
+
+@media (max-aspect-ratio: 1.15/1) {
+  .spotlight-stage-wrap {
+    gap: 12px;
+  }
+  .spotlight-street-signs-lateral,
+  .spotlight-street-signs-anchor {
+    width: clamp(200px, 26vw, 300px);
+  }
+  .spotlight-body {
+    padding: 16px 20px;
+  }
+  .spotlight-tv-layout.has-media {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .spotlight-media-frame {
+    max-height: 32vh;
+  }
 }
 
 @media (max-width: 1100px) {

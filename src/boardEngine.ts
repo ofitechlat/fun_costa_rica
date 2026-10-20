@@ -470,21 +470,27 @@ export class BoardEngine {
     if (!modalBody) return;
 
     // Media display
-    const hasMedia = (story.mediaType === 'video' && !!story.videoUrl) || (story.mediaType === 'photo' && !!story.photoUrl);
+    const isVideo = story.mediaType === 'video' && !!story.videoUrl;
+    const isPhoto = story.mediaType === 'photo' && !!story.photoUrl;
+
+    // Foto / Meme como fondo de pantalla de la tarjeta (se ve igual que las de texto puro, pero con el meme de wallpaper)
+    let backdropHtml = '';
+    if (isPhoto && story.photoUrl) {
+      backdropHtml = `
+        <div class="spotlight-card-backdrop" style="background-image: url('${story.photoUrl}');">
+          <div class="spotlight-backdrop-overlay"></div>
+        </div>
+      `;
+    }
+
     let mediaSection = '';
-    if (story.mediaType === 'video' && story.videoUrl) {
+    if (isVideo && story.videoUrl) {
       mediaSection = `
         <div class="spotlight-media-frame">
           <video id="spotlight-active-video" src="${story.videoUrl}" playsinline ${this.config.videoMuted ? 'muted' : ''} controls></video>
           <div class="video-sound-toggle-btn" id="btn-video-sound">
             ${this.config.videoMuted ? '🔇 Activar Sonido' : '🔊 Con Audio'}
           </div>
-        </div>
-      `;
-    } else if (story.mediaType === 'photo' && story.photoUrl) {
-      mediaSection = `
-        <div class="spotlight-media-frame">
-          <img src="${story.photoUrl}" alt="${story.title}" class="spotlight-photo-img" />
         </div>
       `;
     }
@@ -501,8 +507,9 @@ export class BoardEngine {
     }
 
     modalBody.innerHTML = `
-      <div class="spotlight-tv-layout ${hasMedia ? 'has-media' : 'text-only'}">
-        ${hasMedia ? `
+      ${backdropHtml}
+      <div class="spotlight-tv-layout ${isVideo ? 'has-media' : 'text-only'}${isPhoto ? ' has-backdrop-photo' : ''}">
+        ${isVideo ? `
           <div class="spotlight-media-column">
             ${mediaSection}
           </div>
@@ -510,7 +517,10 @@ export class BoardEngine {
 
         <div class="spotlight-info-column">
           <div class="spotlight-top-meta">
-            <span class="spotlight-cat-tag">${story.category || 'Fuckup Night'}</span>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="spotlight-cat-tag">${story.category || 'Fuckup Night'}</span>
+              ${isPhoto ? '<span class="spotlight-cat-tag photo-pill">🖼️ Meme de Fondo</span>' : ''}
+            </div>
             <span class="spotlight-hashtag">#ShareTheFailure</span>
           </div>
 
