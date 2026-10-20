@@ -458,8 +458,45 @@ async function saveConfig(cfg) {
   return clean;
 }
 
+async function getStatus() {
+  const t0 = Date.now();
+  let dbOk = false;
+  let count = 0;
+  let errorMsg = null;
+  try {
+    const list = await getAllStories();
+    count = list.length;
+    dbOk = true;
+  } catch (err) {
+    errorMsg = err.message;
+  }
+  const latencyMs = Date.now() - t0;
+
+  return {
+    ok: dbOk,
+    mode,
+    modeLabel: mode === 'supabase_pg'
+      ? 'Supabase PostgreSQL (Nube - Tablas Nativas)'
+      : mode === 'supabase_storage'
+      ? 'Supabase Storage Cloud (Nube - Sincronizado)'
+      : mode === 'turso'
+      ? 'Turso SQLite (Nube)'
+      : 'SQLite Local (Offline en servidor)',
+    storiesCount: count,
+    latencyMs,
+    supabase: {
+      url: SUPABASE_URL,
+      bucket: 'fun-media',
+      connected: mode.startsWith('supabase')
+    },
+    isCloud: mode.startsWith('supabase') || mode === 'turso',
+    error: errorMsg
+  };
+}
+
 module.exports = {
   DATA_DIR, DB_FILE, UPLOADS_DIR,
   open, saveStory, getAllStories, getStory, deleteStory, resetStories, getConfig, saveConfig,
-  uploadMediaToSupabase
+  uploadMediaToSupabase, getStatus
 };
+

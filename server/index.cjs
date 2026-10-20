@@ -116,6 +116,15 @@ function createApp() {
 
   router.get('/health', (_req, res) => res.json({ ok: true, app: 'fun-costa-rica' }));
 
+  router.get('/status', async (_req, res) => {
+    try {
+      const status = await db.getStatus();
+      res.json(status);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   router.post('/login', (req, res) => {
     const { user, pass } = req.body || {};
     if (String(user || '').trim() === ADMIN_USER && String(pass || '').trim() === ADMIN_PASS) {

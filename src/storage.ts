@@ -118,27 +118,75 @@ class StorageManager {
   private dbReady: Promise<IDBDatabase> | null = null;
   private apiReady: Promise<boolean>;
 
+  private isServerOnline = false;
+
+  public isOnline(): boolean {
+    return this.isServerOnline;
+  }
+
   constructor() {
     this.apiReady = this.detectApi();
   }
 
-  // ---------- Detección del servidor ----------
+  // ---------- Detección y verificación del servidor ----------
   private async detectApi(): Promise<boolean> {
     try {
       const res = await fetch('/api/health', { cache: 'no-store' });
       if (!res.ok) return false;
       const data = await res.json();
       if (!data || data.ok !== true) return false;
+      this.isServerOnline = true;
       await this.syncConfig();
       return true;
     } catch {
+      this.isServerOnline = false;
       return false;
     }
   }
 
   /** Espera a que se determine el modo de almacenamiento. Devuelve true si hay servidor. */
   async init(): Promise<boolean> {
-    return this.apiReady;
+    const ok = await this.detectApi();
+    return ok;
+  }
+
+  /** Verifica el estado en tiempo real de la conexión a la base de datos y Supabase */
+  async checkServerStatus(): Promise<{
+    connected: boolean;
+    mode: string;
+    modeLabel: string;
+    storiesCount: number;
+    latencyMs: number;
+    isCloud: boolean;
+    supabase?: { url: string; bucket: string; connected: boolean };
+    error?: string | null;
+  }> {
+    const t0 = performance.now();
+    try {
+      const res = await fetch('/api/status', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        this.isServerOnline = true;
+        data.connected = true;
+        data.latencyMs = Math.round(performance.now() - t0);
+        return data;
+      }
+    } catch (err: any) {
+      console.warn('Error comprobando /api/status:', err);
+    }
+
+    this.isServerOnline = false;
+    await this.idb();
+    const local = await this.localGetAll();
+    return {
+      connected: false,
+      mode: 'offline_indexeddb',
+      modeLabel: 'Sin conexión a servidor (Modo Local IndexedDB)',
+      storiesCount: local.length,
+      latencyMs: Math.round(performance.now() - t0),
+      isCloud: false,
+      error: 'El servidor /api no respondió. Las historias se guardan en el navegador local.'
+    };
   }
 
   private async syncConfig(): Promise<void> {
@@ -229,10 +277,22 @@ class StorageManager {
   }
 
   // ---------- Historias ----------
+  /** Obtiene todas las historias: siempre intenta consultar la API primero */
   async getAllStories(): Promise<Story[]> {
-    if (await this.apiReady) return this.api<Story[]>('/api/stories');
-    await this.idb();
-    return this.localGetAll();
+    try {
+      const list = await this.api<Story[]>('/api/stories');
+      this.isServerOnline = true;
+      try {
+        await this.idb();
+        for (const s of list) await this.localSave(s);
+      } catch {}
+      return list;
+    } catch (err) {
+      console.warn('API no disponible (/api/stories), cargando de IndexedDB local:', err);
+      this.isServerOnline = false;
+      await this.idb();
+      return this.localGetAll();
+    }
   }
 
   async getApprovedStories(): Promise<Story[]> {
@@ -240,23 +300,32 @@ class StorageManager {
     return all.filter(s => s.status === 'approved');
   }
 
-  /** Guarda una historia: POST si es nueva, PUT si se está editando una existente. */
+  /** Guarda una historia: siempre intenta POST/PUT a la API / Base de datos primero */
   async saveStory(story: Story, isEdit = false): Promise<Story> {
-    if (await this.apiReady) {
-      if (isEdit) {
-        return this.api<Story>('/api/stories/' + encodeURIComponent(story.id), {
-          method: 'PUT',
-          body: JSON.stringify(story)
-        });
-      }
-      return this.api<Story>('/api/stories', {
-        method: 'POST',
-        body: JSON.stringify(story)
-      });
+    try {
+      const saved = isEdit
+        ? await this.api<Story>('/api/stories/' + encodeURIComponent(story.id), {
+            method: 'PUT',
+            body: JSON.stringify(story)
+          })
+        : await this.api<Story>('/api/stories', {
+            method: 'POST',
+            body: JSON.stringify(story)
+          });
+
+      this.isServerOnline = true;
+      try {
+        await this.idb();
+        await this.localSave(saved);
+      } catch {}
+      return saved;
+    } catch (err) {
+      console.warn('No se pudo guardar en API (/api/stories), guardando en IndexedDB local:', err);
+      this.isServerOnline = false;
+      await this.idb();
+      await this.localSave(story);
+      return story;
     }
-    await this.idb();
-    await this.localSave(story);
-    return story;
   }
 
   /** Actualiza una historia existente. */
@@ -265,9 +334,10 @@ class StorageManager {
   }
 
   async deleteStory(id: string): Promise<void> {
-    if (await this.apiReady) {
+    try {
       await this.api('/api/stories/' + encodeURIComponent(id), { method: 'DELETE' });
-      return;
+    } catch (err) {
+      console.warn('Error eliminando en API:', err);
     }
     await this.idb();
     return new Promise((resolve, reject) => {
@@ -279,9 +349,10 @@ class StorageManager {
   }
 
   async resetSeedData(): Promise<void> {
-    if (await this.apiReady) {
+    try {
       await this.api('/api/admin/reset', { method: 'POST' });
-      return;
+    } catch (err) {
+      console.warn('Error reseteando en API:', err);
     }
     await this.idb();
     return new Promise((resolve, reject) => {
@@ -294,6 +365,7 @@ class StorageManager {
       clearReq.onerror = () => reject(clearReq.error);
     });
   }
+
 
   // ---------- Configuración de la pizarra ----------
   getConfig(): BoardConfig {

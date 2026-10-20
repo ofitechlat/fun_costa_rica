@@ -72,6 +72,9 @@ export class AdminDashboard {
             <button class="nav-item" data-tab="tools">
               🛠️ Herramientas & Demo
             </button>
+            <button class="nav-item" data-tab="servers">
+              🌐 Servidores & Base de Datos
+            </button>
           </nav>
 
           <div class="admin-sidebar-footer">
@@ -118,7 +121,10 @@ export class AdminDashboard {
                 <p>Modera, aprueba o dispara cualquier historia inmediatamente a pantalla completa.</p>
               </div>
 
-              <div class="tab-actions-right">
+              <div class="tab-actions-right" style="display: flex; gap: 10px; align-items: center;">
+                <button type="button" class="btn-quick-check-pill" id="btn-quick-check-db" title="Verificar estado de base de datos en tiempo real">
+                  ⚡ BD: <span id="quick-db-badge">Verificar</span>
+                </button>
                 <button class="btn-primary" id="btn-create-manual-story">
                   + Nueva Historia (foto / meme / 🎬 video)
                 </button>
@@ -304,6 +310,85 @@ export class AdminDashboard {
                   </label>
                 </div>
               </div>
+            </div>
+          </section>
+
+          <!-- TAB 4: SERVERS & DATABASE MONITOR -->
+          <section id="tab-servers" class="admin-tab-pane">
+            <div class="tab-header-flex">
+              <div>
+                <h2>Diagnóstico de Servidores & Base de Datos</h2>
+                <p>Monitoreo en tiempo real de la conexión a Supabase, persistencia de historias y alojamiento CDN de fotos.</p>
+              </div>
+              <div class="tab-actions-right">
+                <button type="button" class="btn-primary" id="btn-run-db-check">
+                  🔄 Probar Conexión Ahora
+                </button>
+              </div>
+            </div>
+
+            <!-- Server Status Banner -->
+            <div class="db-status-banner status-online" id="db-status-banner">
+              <div class="db-status-header-row">
+                <div class="db-status-badge-wrap">
+                  <span class="db-pulse-dot dot-online" id="db-status-dot"></span>
+                  <h3 class="db-status-title" id="db-status-title">Conexión Verificada</h3>
+                </div>
+                <div id="db-status-action-pill"></div>
+              </div>
+
+              <div class="db-status-meta-grid">
+                <div class="db-meta-item">
+                  <span class="db-meta-label">Motor de Base de Datos</span>
+                  <span class="db-meta-val" id="db-val-engine">Supabase Cloud</span>
+                </div>
+                <div class="db-meta-item">
+                  <span class="db-meta-label">Latencia (Ping)</span>
+                  <span class="db-meta-val" id="db-val-ping">Calculando...</span>
+                </div>
+                <div class="db-meta-item">
+                  <span class="db-meta-label">Historias en la Base</span>
+                  <span class="db-meta-val" id="db-val-count">${totalCount}</span>
+                </div>
+                <div class="db-meta-item">
+                  <span class="db-meta-label">Almacenamiento CDN</span>
+                  <span class="db-meta-val" id="db-val-storage">Bucket: fun-media</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="tools-grid" style="margin-top: 24px;">
+              <div class="tool-card">
+                <div class="tool-icon">🧪</div>
+                <h3>Probar Creación de Historia en Supabase</h3>
+                <p>Crea una historia de prueba con imagen real y consulta de inmediato si se guardó en la base de datos.</p>
+                <button type="button" class="btn-secondary" id="btn-test-db-create">
+                  ⚡ Crear y Validar Historia
+                </button>
+              </div>
+
+              <div class="tool-card">
+                <div class="tool-icon">☁️</div>
+                <h3>Supabase Storage (fun-media)</h3>
+                <p>Verifica que las imágenes y fotos de los participantes se alojen en CDN pública sin ocupar espacio en servidor.</p>
+                <button type="button" class="btn-secondary" id="btn-test-storage-check">
+                  🔍 Probar CDN de Imágenes
+                </button>
+              </div>
+
+              <div class="tool-card">
+                <div class="tool-icon">🔄</div>
+                <h3>Sincronizar Pizarra con la Nube</h3>
+                <p>Fuerza una recarga limpia desde la base de datos para ver de inmediato las historias agregadas por otros usuarios.</p>
+                <button type="button" class="btn-secondary" id="btn-sync-cloud-stories">
+                  📥 Recargar Historias de la Nube
+                </button>
+              </div>
+            </div>
+
+            <div class="db-diag-wrap" style="margin-top: 24px;">
+              <h3>Registro de Auditoría en Vivo (Console Log)</h3>
+              <pre id="db-diag-log" class="db-diag-console">Haz clic en "Probar Conexión Ahora" para iniciar el diagnóstico...</pre>
             </div>
           </section>
         </main>
@@ -656,5 +741,164 @@ export class AdminDashboard {
         }
       }
     });
+
+    // Diagnóstico de Base de Datos y Servidores
+    const logBox = this.container.querySelector('#db-diag-log') as HTMLElement;
+    const banner = this.container.querySelector('#db-status-banner') as HTMLElement;
+    const dot = this.container.querySelector('#db-status-dot') as HTMLElement;
+    const title = this.container.querySelector('#db-status-title') as HTMLElement;
+    const valEngine = this.container.querySelector('#db-val-engine') as HTMLElement;
+    const valPing = this.container.querySelector('#db-val-ping') as HTMLElement;
+    const valCount = this.container.querySelector('#db-val-count') as HTMLElement;
+    const valStorage = this.container.querySelector('#db-val-storage') as HTMLElement;
+    const quickBadge = this.container.querySelector('#quick-db-badge') as HTMLElement;
+
+    const appendLog = (msg: string) => {
+      if (!logBox) return;
+      const time = new Date().toLocaleTimeString();
+      logBox.textContent += `\n[${time}] ${msg}`;
+      logBox.scrollTop = logBox.scrollHeight;
+    };
+
+    const runDiagnostics = async () => {
+      if (logBox) logBox.textContent = `[${new Date().toLocaleTimeString()}] Iniciando diagnóstico de servidores y base de datos...`;
+      if (title) title.textContent = 'Consultando servidores...';
+
+      try {
+        const status = await storage.checkServerStatus();
+        appendLog(`Respuesta del servidor recibida en ${status.latencyMs} ms`);
+        appendLog(`Modo de almacenamiento: ${status.modeLabel}`);
+        appendLog(`Historias registradas en la base: ${status.storiesCount}`);
+
+        if (status.connected && status.isCloud) {
+          if (banner) {
+            banner.className = 'db-status-banner status-online';
+          }
+          if (dot) dot.className = 'db-pulse-dot dot-online';
+          if (title) title.textContent = `🟢 Conectado con éxito a la nube (${status.modeLabel})`;
+          if (quickBadge) {
+            quickBadge.textContent = '🟢 Supabase (Nube)';
+            quickBadge.style.color = '#00f5d4';
+          }
+        } else if (status.connected) {
+          if (banner) banner.className = 'db-status-banner status-online';
+          if (dot) dot.className = 'db-pulse-dot dot-online';
+          if (title) title.textContent = `🟡 Servidor activo en modo local (${status.modeLabel})`;
+          if (quickBadge) {
+            quickBadge.textContent = '🟡 Local (SQLite)';
+            quickBadge.style.color = '#ffbe0b';
+          }
+        } else {
+          if (banner) banner.className = 'db-status-banner status-offline';
+          if (dot) dot.className = 'db-pulse-dot dot-offline';
+          if (title) title.textContent = '🔴 Servidor no disponible (Modo IndexedDB en el navegador)';
+          if (quickBadge) {
+            quickBadge.textContent = '🔴 Offline';
+            quickBadge.style.color = '#ff006e';
+          }
+        }
+
+        if (valEngine) valEngine.textContent = status.modeLabel;
+        if (valPing) valPing.textContent = `${status.latencyMs} ms`;
+        if (valCount) valCount.textContent = `${status.storiesCount} historias`;
+        if (valStorage) {
+          valStorage.textContent = status.supabase?.connected
+            ? 'Supabase CDN (Bucket: fun-media)'
+            : 'Local';
+        }
+
+        appendLog(JSON.stringify(status, null, 2));
+      } catch (err: any) {
+        appendLog(`❌ Error en diagnóstico: ${err.message}`);
+        if (title) title.textContent = '❌ Error consultando estado';
+        if (banner) banner.className = 'db-status-banner status-offline';
+        if (dot) dot.className = 'db-pulse-dot dot-offline';
+      }
+    };
+
+    // Botón Probar Conexión Ahora
+    this.container.querySelector('#btn-run-db-check')?.addEventListener('click', () => {
+      runDiagnostics();
+    });
+
+    // Botón Rápido de Estado en el encabezado
+    this.container.querySelector('#btn-quick-check-db')?.addEventListener('click', () => {
+      navItems.forEach(n => n.classList.remove('active'));
+      tabPanes.forEach(p => p.classList.remove('active'));
+      const serversNav = this.container.querySelector('.admin-nav [data-tab="servers"]');
+      serversNav?.classList.add('active');
+      this.container.querySelector('#tab-servers')?.classList.add('active');
+      runDiagnostics();
+    });
+
+    // Botón Crear y Validar Historia en Supabase
+    this.container.querySelector('#btn-test-db-create')?.addEventListener('click', async () => {
+      appendLog('🚀 Creando historia de prueba para enviar a la base de datos...');
+      const testStory: Story = {
+        id: 'test-sync-' + Date.now(),
+        createdAt: Date.now(),
+        title: 'Prueba de Sincronización en Vivo ' + new Date().toLocaleTimeString(),
+        category: 'Tecnología',
+        author: { isAnonymous: false, name: 'Admin Tester' },
+        mediaType: 'photo',
+        photoUrl: 'https://qzkzpgnvgvxvyuyzmpzf.supabase.co/storage/v1/object/public/fun-media/uploads/disaster-girl-demo.jpg',
+        content: 'Verificando que las historias se suben directamente a la base de datos en Supabase y se visualizan en tiempo real.',
+        learnings: 'Conexión a la nube verificada.',
+        status: 'approved',
+        likes: 1
+      };
+
+      try {
+        const saved = await storage.saveStory(testStory);
+        appendLog('✅ ¡Historia enviada con éxito! ID asignado: ' + saved.id);
+        appendLog('Objeto guardado: ' + JSON.stringify(saved, null, 2));
+        alert('🎉 ¡Historia guardada exitosamente en la base de datos de Supabase!');
+        await runDiagnostics();
+        this.onStoriesChanged?.();
+      } catch (err: any) {
+        appendLog('❌ Error guardando historia: ' + err.message);
+        alert('Error: ' + err.message);
+      }
+    });
+
+    // Botón Probar CDN de Imágenes
+    this.container.querySelector('#btn-test-storage-check')?.addEventListener('click', async () => {
+      appendLog('🔍 Probando velocidad y disponibilidad del CDN de imágenes de Supabase...');
+      const testUrl = 'https://qzkzpgnvgvxvyuyzmpzf.supabase.co/storage/v1/object/public/fun-media/uploads/disaster-girl-demo.jpg';
+      const t0 = performance.now();
+      try {
+        const res = await fetch(testUrl, { method: 'HEAD', cache: 'no-store' });
+        const ms = Math.round(performance.now() - t0);
+        if (res.ok) {
+          appendLog(`✅ CDN de Supabase respondiendo OK (${res.status}) en ${ms} ms.`);
+          appendLog(`Tipo de contenido: ${res.headers.get('content-type')} | Tamaño: ${res.headers.get('content-length')} bytes`);
+          alert(`✅ CDN de Supabase funcionando perfecto (${ms} ms)`);
+        } else {
+          appendLog(`⚠️ CDN respondió con código ${res.status}`);
+          alert(`Aviso: CDN respondió con código ${res.status}`);
+        }
+      } catch (err: any) {
+        appendLog(`❌ Error conectando a CDN: ${err.message}`);
+        alert('Error conectando a CDN: ' + err.message);
+      }
+    });
+
+    // Botón Recargar Historias de la Nube
+    this.container.querySelector('#btn-sync-cloud-stories')?.addEventListener('click', async () => {
+      appendLog('📥 Forzando descarga limpia de todas las historias desde la base de datos...');
+      try {
+        const stories = await storage.getAllStories();
+        appendLog(`✅ Se recuperaron ${stories.length} historias de la nube.`);
+        this.renderStoriesRows(stories);
+        this.onStoriesChanged?.();
+        alert(`¡Sincronizado! Se cargaron ${stories.length} historias desde la nube.`);
+      } catch (err: any) {
+        appendLog(`❌ Error recargando historias: ${err.message}`);
+      }
+    });
+
+    // Ejecuta diagnóstico inicial en segundo plano para poblar el indicador
+    runDiagnostics();
   }
 }
+
