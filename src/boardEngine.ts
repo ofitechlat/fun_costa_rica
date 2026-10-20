@@ -37,6 +37,9 @@ export class BoardEngine {
   private streetSign3D: StreetSign3D | null = null;
   private particles: Array<{ x: number; y: number; size: number; speedY: number; speedX: number; color: string; alpha: number }> = [];
 
+  private pollTimer: any = null;
+  public onStoriesUpdated?: (count: number) => void;
+
   constructor(container: HTMLElement, particleCanvas: HTMLCanvasElement, spotlightModal: HTMLElement) {
     this.container = container;
     this.particleCanvas = particleCanvas;
@@ -47,17 +50,11 @@ export class BoardEngine {
     this.initParticles();
     this.setupWindowEvents();
     this.setupSpotlightModal();
+    this.startAutoPolling();
   }
 
   updateConfig(newConfig: BoardConfig) {
     this.config = newConfig;
-    this.resetSpotlightTimer();
-  }
-
-  async loadStories(approvedOnly = true) {
-    this.stories = approvedOnly ? await storage.getApprovedStories() : await storage.getAllStories();
-    this.renderCards();
-    this.startSwimming();
     this.resetSpotlightTimer();
   }
 
@@ -126,6 +123,178 @@ export class BoardEngine {
     this.particleFrameId = requestAnimationFrame(() => this.animateParticles());
   }
 
+  async loadStories(approvedOnly = true) {
+    this.stories = approvedOnly ? await storage.getApprovedStories() : await storage.getAllStories();
+    this.renderCards();
+    this.startSwimming();
+    this.resetSpotlightTimer();
+    if (this.onStoriesUpdated) {
+      this.onStoriesUpdated(this.stories.length);
+    }
+  }
+
+  /**
+   * Background polling that checks for newly submitted or deleted cards every 8 seconds.
+   * Performs an incremental sync so existing swimming cards are NOT reset or interrupted.
+   */
+  private startAutoPolling() {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(async () => {
+      try {
+        const freshStories = await storage.getApprovedStories();
+        this.syncStories(freshStories);
+      } catch (err) {
+        console.warn('Auto-poll sync check skipped:', err);
+      }
+    }, 8000);
+  }
+
+  /**
+   * Synchronizes incoming stories with the current swimming board smoothly without resetting existing cards.
+   */
+  public syncStories(freshStories: Story[]) {
+    const currentIds = new Set(this.cards.map(c => c.story.id));
+    const freshIds = new Set(freshStories.map(s => s.id));
+
+    let hasChanges = false;
+
+    // 1. Remove cards that were deleted or unapproved
+    for (let i = this.cards.length - 1; i >= 0; i--) {
+      const card = this.cards[i];
+      if (!freshIds.has(card.story.id)) {
+        hasChanges = true;
+        card.element.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+        card.element.style.opacity = '0';
+        card.element.style.transform += ' scale(0.6)';
+        setTimeout(() => {
+          if (card.element.parentNode) {
+            card.element.parentNode.removeChild(card.element);
+          }
+        }, 600);
+        this.cards.splice(i, 1);
+      }
+    }
+
+    // 2. Add new cards that are not yet on the swimming board
+    const newStories = freshStories.filter(s => !currentIds.has(s.id));
+    if (newStories.length > 0) {
+      hasChanges = true;
+      newStories.forEach(story => {
+        const swimmingCard = this.createCardElement(story, true);
+        this.cards.push(swimmingCard);
+      });
+    }
+
+    if (hasChanges) {
+      this.stories = freshStories;
+      if (this.onStoriesUpdated) {
+        this.onStoriesUpdated(this.stories.length);
+      }
+    }
+  }
+
+  private createCardElement(story: Story, isBrandNew = false): SwimmingCard {
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    const cardW = 320;
+    const cardH = 260;
+
+    const cardEl = document.createElement('div');
+    cardEl.className = `swimming-card media-${story.mediaType}${isBrandNew ? ' is-new-card' : ''}`;
+    cardEl.setAttribute('data-id', story.id);
+
+    // Media Badge
+    let mediaBadge = '';
+    if (story.mediaType === 'video') {
+      mediaBadge = `<span class="badge-media video-badge"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> VIDEO</span>`;
+    } else if (story.mediaType === 'photo') {
+      mediaBadge = `<span class="badge-media photo-badge"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> FOTO</span>`;
+    } else {
+      mediaBadge = `<span class="badge-media text-badge"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> TEXTO</span>`;
+    }
+
+    // Author Badge
+    const authorBadge = story.author.isAnonymous
+      ? `<span class="badge-author anon"><span class="anon-icon">🕵️</span> 100% Anónimo</span>`
+      : `<span class="badge-author known"><span class="author-avatar">${story.author.name?.charAt(0).toUpperCase() || 'F'}</span> ${story.author.name}</span>`;
+
+    // Social Links
+    let socials = '';
+    if (!story.author.isAnonymous) {
+      if (story.author.linkedin) {
+        socials += `<span class="social-chip linkedin" title="LinkedIn">in</span>`;
+      }
+      if (story.author.instagram) {
+        socials += `<span class="social-chip instagram" title="Instagram">IG</span>`;
+      }
+      if (story.author.website) {
+        socials += `<span class="social-chip web" title="Sitio Web">🌐</span>`;
+      }
+    }
+
+    // Preview Media Snippet
+    let previewMedia = '';
+    if (story.mediaType === 'photo' && story.photoUrl) {
+      previewMedia = `<div class="card-thumb" style="background-image: url('${story.photoUrl}')"></div>`;
+    } else if (story.mediaType === 'video' && story.videoUrl) {
+      previewMedia = `
+        <div class="card-video-thumb">
+          <video src="${story.videoUrl}" muted preload="metadata"></video>
+          <div class="play-overlay"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><polygon points="6 4 18 12 6 20 6 4"/></svg></div>
+        </div>
+      `;
+    }
+
+    cardEl.innerHTML = `
+      <div class="card-inner">
+        <div class="card-header">
+          <span class="category-tag">${story.category || 'Fuckup'}</span>
+          ${mediaBadge}
+        </div>
+        ${previewMedia}
+        <h3 class="card-title">${story.title}</h3>
+        <p class="card-excerpt">${story.content.substring(0, 110)}${story.content.length > 110 ? '...' : ''}</p>
+        <div class="card-footer">
+          ${authorBadge}
+          <div class="card-socials">${socials}</div>
+        </div>
+      </div>
+    `;
+
+    this.container.appendChild(cardEl);
+
+    // Initial position
+    let initialX = Math.random() * (viewportW - cardW - 80) + 40;
+    let initialY = Math.random() * (viewportH - cardH - 140) + 90;
+
+    // Speed scale
+    let speedMult = 0.8;
+    if (this.config.swimSpeed === 'slow') speedMult = 0.4;
+    if (this.config.swimSpeed === 'fast') speedMult = 1.4;
+
+    const swimmingCard: SwimmingCard = {
+      story,
+      element: cardEl,
+      x: Math.max(20, Math.min(viewportW - cardW - 20, initialX)),
+      y: Math.max(80, Math.min(viewportH - cardH - 20, initialY)),
+      vx: (Math.random() > 0.5 ? 1 : -1) * (0.3 + Math.random() * 0.5) * speedMult,
+      vy: (Math.random() > 0.5 ? 1 : -1) * (0.2 + Math.random() * 0.4) * speedMult,
+      angle: (Math.random() - 0.5) * 5,
+      vAngle: (Math.random() - 0.5) * 0.05,
+      width: cardW,
+      height: cardH,
+      isDragging: false,
+      isHovered: false,
+      dragStartX: 0,
+      dragStartY: 0,
+      cardStartX: 0,
+      cardStartY: 0
+    };
+
+    this.attachCardInteractions(swimmingCard);
+    return swimmingCard;
+  }
+
   private renderCards() {
     // Clean old card elements
     this.container.innerHTML = '';
@@ -137,71 +306,9 @@ export class BoardEngine {
     const cardH = 260;
 
     this.stories.forEach((story, index) => {
-      const cardEl = document.createElement('div');
-      cardEl.className = `swimming-card media-${story.mediaType}`;
-      cardEl.setAttribute('data-id', story.id);
+      const swimmingCard = this.createCardElement(story, false);
 
-      // Media Badge
-      let mediaBadge = '';
-      if (story.mediaType === 'video') {
-        mediaBadge = `<span class="badge-media video-badge"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> VIDEO</span>`;
-      } else if (story.mediaType === 'photo') {
-        mediaBadge = `<span class="badge-media photo-badge"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> FOTO</span>`;
-      } else {
-        mediaBadge = `<span class="badge-media text-badge"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> TEXTO</span>`;
-      }
-
-      // Author Badge
-      const authorBadge = story.author.isAnonymous
-        ? `<span class="badge-author anon"><span class="anon-icon">🕵️</span> 100% Anónimo</span>`
-        : `<span class="badge-author known"><span class="author-avatar">${story.author.name?.charAt(0).toUpperCase() || 'F'}</span> ${story.author.name}</span>`;
-
-      // Social Links
-      let socials = '';
-      if (!story.author.isAnonymous) {
-        if (story.author.linkedin) {
-          socials += `<span class="social-chip linkedin" title="LinkedIn">in</span>`;
-        }
-        if (story.author.instagram) {
-          socials += `<span class="social-chip instagram" title="Instagram">IG</span>`;
-        }
-        if (story.author.website) {
-          socials += `<span class="social-chip web" title="Sitio Web">🌐</span>`;
-        }
-      }
-
-      // Preview Media Snippet
-      let previewMedia = '';
-      if (story.mediaType === 'photo' && story.photoUrl) {
-        previewMedia = `<div class="card-thumb" style="background-image: url('${story.photoUrl}')"></div>`;
-      } else if (story.mediaType === 'video' && story.videoUrl) {
-        previewMedia = `
-          <div class="card-video-thumb">
-            <video src="${story.videoUrl}" muted preload="metadata"></video>
-            <div class="play-overlay"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><polygon points="6 4 18 12 6 20 6 4"/></svg></div>
-          </div>
-        `;
-      }
-
-      cardEl.innerHTML = `
-        <div class="card-inner">
-          <div class="card-header">
-            <span class="category-tag">${story.category || 'Fuckup'}</span>
-            ${mediaBadge}
-          </div>
-          ${previewMedia}
-          <h3 class="card-title">${story.title}</h3>
-          <p class="card-excerpt">${story.content.substring(0, 110)}${story.content.length > 110 ? '...' : ''}</p>
-          <div class="card-footer">
-            ${authorBadge}
-            <div class="card-socials">${socials}</div>
-          </div>
-        </div>
-      `;
-
-      this.container.appendChild(cardEl);
-
-      // Initial distributed coordinates
+      // Distribute evenly in a grid-like start
       const margin = 80;
       const cols = Math.max(2, Math.floor((viewportW - margin * 2) / (cardW + 40)));
       const rows = Math.max(2, Math.ceil(this.stories.length / cols));
@@ -211,34 +318,9 @@ export class BoardEngine {
       const cellW = (viewportW - margin * 2) / cols;
       const cellH = (viewportH - margin * 2 - 80) / Math.max(1, rows);
 
-      const initialX = margin + col * cellW + Math.random() * (cellW - cardW);
-      const initialY = 90 + row * cellH + Math.random() * Math.max(20, cellH - cardH);
+      swimmingCard.x = Math.max(20, Math.min(viewportW - cardW - 20, margin + col * cellW + Math.random() * (cellW - cardW)));
+      swimmingCard.y = Math.max(80, Math.min(viewportH - cardH - 20, 90 + row * cellH + Math.random() * Math.max(20, cellH - cardH)));
 
-      // Speed scale
-      let speedMult = 0.8;
-      if (this.config.swimSpeed === 'slow') speedMult = 0.4;
-      if (this.config.swimSpeed === 'fast') speedMult = 1.4;
-
-      const swimmingCard: SwimmingCard = {
-        story,
-        element: cardEl,
-        x: Math.max(20, Math.min(viewportW - cardW - 20, initialX)),
-        y: Math.max(80, Math.min(viewportH - cardH - 20, initialY)),
-        vx: (Math.random() > 0.5 ? 1 : -1) * (0.3 + Math.random() * 0.5) * speedMult,
-        vy: (Math.random() > 0.5 ? 1 : -1) * (0.2 + Math.random() * 0.4) * speedMult,
-        angle: (Math.random() - 0.5) * 5,
-        vAngle: (Math.random() - 0.5) * 0.05,
-        width: cardW,
-        height: cardH,
-        isDragging: false,
-        isHovered: false,
-        dragStartX: 0,
-        dragStartY: 0,
-        cardStartX: 0,
-        cardStartY: 0
-      };
-
-      this.attachCardInteractions(swimmingCard);
       this.cards.push(swimmingCard);
     });
   }
@@ -608,5 +690,7 @@ export class BoardEngine {
     if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
     if (this.particleFrameId) cancelAnimationFrame(this.particleFrameId);
     if (this.spotlightTimer) clearTimeout(this.spotlightTimer);
+    if (this.pollTimer) clearInterval(this.pollTimer);
   }
 }
+

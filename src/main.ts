@@ -52,6 +52,11 @@ const boardSpeedLabel = document.getElementById('board-speed-label') as HTMLElem
 
 // Initialize Components
 const boardEngine = new BoardEngine(swimmingContainer, particleCanvas, spotlightModalEl);
+boardEngine.onStoriesUpdated = (count: number) => {
+  if (liveStoriesCount) {
+    liveStoriesCount.textContent = `🟢 En Vivo: ${count} cagadas nadando`;
+  }
+};
 const qrModal = new QrModal(qrModalEl);
 const memePickerModal = new MemePickerModal(memePickerModalEl);
 const adStudio = new AdStudio(adStudioContainer);
