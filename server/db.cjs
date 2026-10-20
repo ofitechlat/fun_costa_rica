@@ -1,6 +1,7 @@
 // Adaptador de Base de Datos para FuN Costa Rica:
-// 1. Supabase (PostgreSQL en la nube): Si SUPABASE_URL y SUPABASE_KEY están configurados.
-//    Permite sincronización multiusuario en tiempo real en Vercel y proyector.
+// 1. Supabase (PostgreSQL / Supabase Storage): Si SUPABASE_URL y SUPABASE_KEY están configurados.
+//    Permite sincronización multiusuario en tiempo real en Vercel, móvil y proyector,
+//    así como alojamiento CDN persistente de fotos y memes.
 // 2. Turso (libSQL): Si TURSO_DATABASE_URL está configurado.
 // 3. SQLite Local (sql.js / fun.db): Si no hay internet o no hay credenciales (modo offline).
 
@@ -36,10 +37,15 @@ const DATA_DIR = process.env.DATA_DIR || (process.env.VERCEL ? '/tmp' : path.joi
 const DB_FILE = path.join(DATA_DIR, 'fun.db');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
-let mode = 'local'; // 'supabase' | 'turso' | 'local'
+let mode = 'local'; // 'supabase_pg' | 'supabase_storage' | 'turso' | 'local'
 let sbClient = null;
 let tursoClient = null;
 let localDb = null;
+
+const EXT = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  'video/webm': 'webm', 'video/mp4': 'mp4', 'video/quicktime': 'mov'
+};
 
 const SCHEMA_STMTS = [
   `CREATE TABLE IF NOT EXISTS stories (
@@ -76,6 +82,34 @@ function rows(sql, params = []) {
   return out;
 }
 
+// Sube archivos en base64 a Supabase Storage y retorna la URL pública permanente en CDN
+async function uploadMediaToSupabase(filePrefix, dataUrl) {
+  if (!sbClient) return null;
+  try {
+    const m = /^data:([\w/+.-]+)(?:;[^,]*)?;base64,(.*)$/s.exec(dataUrl);
+    if (!m) return null;
+    const mime = m[1];
+    const ext = EXT[mime] || 'bin';
+    const safePrefix = String(filePrefix).replace(/[^\w-]/g, '_');
+    const filename = `uploads/${safePrefix}-${Date.now()}.${ext}`;
+    const buf = Buffer.from(m[2], 'base64');
+    const { error } = await sbClient.storage.from('fun-media').upload(filename, buf, {
+      contentType: mime,
+      cacheControl: '31536000',
+      upsert: true
+    });
+    if (error) {
+      console.warn('Error subiendo imagen a Supabase Storage:', error.message);
+      return null;
+    }
+    const { data } = sbClient.storage.from('fun-media').getPublicUrl(filename);
+    return data ? data.publicUrl : null;
+  } catch (err) {
+    console.warn('Excepción en uploadMediaToSupabase:', err.message);
+    return null;
+  }
+}
+
 async function open() {
   // 1. SUPABASE (Prioridad 1)
   if (SUPABASE_URL && SUPABASE_KEY) {
@@ -85,25 +119,52 @@ async function open() {
         auth: { persistSession: false }
       });
 
-      // Validamos si la tabla stories existe en Supabase
+      // Asegurar existencia del bucket fun-media para imágenes y sincronización en la nube
+      try {
+        const { data: buckets } = await sbClient.storage.listBuckets();
+        const hasBucket = (buckets || []).some(b => b.name === 'fun-media');
+        if (!hasBucket) {
+          await sbClient.storage.createBucket('fun-media', { public: true });
+        }
+      } catch {}
+
+      // Comprobar si existen las tablas PostgreSQL nativas en Supabase
       const testRes = await sbClient.from('stories').select('id').limit(1);
       if (!testRes.error) {
-        mode = 'supabase';
-        console.log('⚡ Conectado exitosamente a Supabase (PostgreSQL en la nube)');
-
-        // Contar historias y cargar seed si está vacía
+        mode = 'supabase_pg';
+        console.log('⚡ Conectado a Supabase PostgreSQL (Tablas nativas activas)');
         const countRes = await sbClient.from('stories').select('id', { count: 'exact' });
         if (!countRes.error && (countRes.count === 0 || countRes.data.length === 0)) {
-          console.log('🌱 Inicializando historias semilla en Supabase...');
+          console.log('🌱 Inicializando historias semilla en Supabase PostgreSQL...');
           for (const s of seedStories()) {
             await saveStory(s);
           }
         }
         return sbClient;
-      } else {
-        console.warn('⚠️ Supabase respondió con error (¿Faltan ejecutar las tablas en SQL Editor?):', testRes.error.message);
-        console.log('👉 Se usará SQLite local de respaldo mientras se crean las tablas en Supabase.');
       }
+
+      // Si las tablas PostgreSQL aún no se han creado en SQL Editor,
+      // usamos Supabase Storage Cloud JSON para sincronizar en tiempo real en Vercel
+      console.log('☁️ Conectando a Supabase Storage Cloud (Sincronización multiusuario activa en la nube)');
+      mode = 'supabase_storage';
+
+      // Verificar / inicializar db/stories.json
+      const dlRes = await sbClient.storage.from('fun-media').download('db/stories.json');
+      if (dlRes.error || !dlRes.data) {
+        console.log('🌱 Inicializando historias semilla en Supabase Cloud...');
+        const seeds = seedStories();
+        await sbClient.storage.from('fun-media').upload('db/stories.json', JSON.stringify(seeds, null, 2), {
+          contentType: 'application/json',
+          cacheControl: '0',
+          upsert: true
+        });
+        await sbClient.storage.from('fun-media').upload('db/config.json', JSON.stringify(DEFAULT_CONFIG, null, 2), {
+          contentType: 'application/json',
+          cacheControl: '0',
+          upsert: true
+        });
+      }
+      return sbClient;
     } catch (err) {
       console.warn('⚠️ No se pudo inicializar cliente de Supabase:', err.message);
     }
@@ -150,7 +211,19 @@ function upsertStoryLocal(story) {
 }
 
 async function saveStory(story) {
-  if (mode === 'supabase' && sbClient) {
+  // Si la historia contiene imágenes o videos en base64 y tenemos Supabase, los subimos a CDN
+  if (sbClient) {
+    if (typeof story.photoUrl === 'string' && story.photoUrl.startsWith('data:')) {
+      const pubUrl = await uploadMediaToSupabase(story.id + '-photo', story.photoUrl);
+      if (pubUrl) story.photoUrl = pubUrl;
+    }
+    if (typeof story.videoUrl === 'string' && story.videoUrl.startsWith('data:')) {
+      const pubUrl = await uploadMediaToSupabase(story.id + '-video', story.videoUrl);
+      if (pubUrl) story.videoUrl = pubUrl;
+    }
+  }
+
+  if (mode === 'supabase_pg' && sbClient) {
     const { error } = await sbClient.from('stories').upsert({
       id: story.id,
       created_at: Number(story.createdAt) || Date.now(),
@@ -158,6 +231,19 @@ async function saveStory(story) {
       data: story
     }, { onConflict: 'id' });
     if (error) throw new Error(error.message);
+    return;
+  }
+
+  if (mode === 'supabase_storage' && sbClient) {
+    const stories = await getAllStories();
+    const idx = stories.findIndex(s => s.id === story.id);
+    if (idx >= 0) stories[idx] = story;
+    else stories.unshift(story);
+    await sbClient.storage.from('fun-media').upload('db/stories.json', JSON.stringify(stories, null, 2), {
+      contentType: 'application/json',
+      cacheControl: '0',
+      upsert: true
+    });
     return;
   }
 
@@ -174,13 +260,24 @@ async function saveStory(story) {
 }
 
 async function getAllStories() {
-  if (mode === 'supabase' && sbClient) {
+  if (mode === 'supabase_pg' && sbClient) {
     const { data, error } = await sbClient
       .from('stories')
       .select('data')
       .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return (data || []).map(r => r.data);
+  }
+
+  if (mode === 'supabase_storage' && sbClient) {
+    try {
+      const { data, error } = await sbClient.storage.from('fun-media').download('db/stories.json');
+      if (error || !data) return [];
+      const text = await data.text();
+      return JSON.parse(text);
+    } catch {
+      return [];
+    }
   }
 
   if (mode === 'turso' && tursoClient) {
@@ -192,7 +289,7 @@ async function getAllStories() {
 }
 
 async function getStory(id) {
-  if (mode === 'supabase' && sbClient) {
+  if (mode === 'supabase_pg' && sbClient) {
     const { data, error } = await sbClient
       .from('stories')
       .select('data')
@@ -200,6 +297,11 @@ async function getStory(id) {
       .maybeSingle();
     if (error) throw new Error(error.message);
     return data ? data.data : null;
+  }
+
+  if (mode === 'supabase_storage' && sbClient) {
+    const all = await getAllStories();
+    return all.find(s => s.id === id) || null;
   }
 
   if (mode === 'turso' && tursoClient) {
@@ -215,9 +317,20 @@ async function getStory(id) {
 }
 
 async function deleteStory(id) {
-  if (mode === 'supabase' && sbClient) {
+  if (mode === 'supabase_pg' && sbClient) {
     const { error } = await sbClient.from('stories').delete().eq('id', id);
     if (error) throw new Error(error.message);
+    return;
+  }
+
+  if (mode === 'supabase_storage' && sbClient) {
+    const all = await getAllStories();
+    const filtered = all.filter(s => s.id !== id);
+    await sbClient.storage.from('fun-media').upload('db/stories.json', JSON.stringify(filtered, null, 2), {
+      contentType: 'application/json',
+      cacheControl: '0',
+      upsert: true
+    });
     return;
   }
 
@@ -232,17 +345,28 @@ async function deleteStory(id) {
 }
 
 async function resetStories() {
-  if (mode === 'supabase' && sbClient) {
+  const seeds = seedStories();
+
+  if (mode === 'supabase_pg' && sbClient) {
     await sbClient.from('stories').delete().neq('id', '');
-    for (const s of seedStories()) {
+    for (const s of seeds) {
       await saveStory(s);
     }
     return;
   }
 
+  if (mode === 'supabase_storage' && sbClient) {
+    await sbClient.storage.from('fun-media').upload('db/stories.json', JSON.stringify(seeds, null, 2), {
+      contentType: 'application/json',
+      cacheControl: '0',
+      upsert: true
+    });
+    return;
+  }
+
   if (mode === 'turso' && tursoClient) {
     await tursoClient.execute('DELETE FROM stories');
-    for (const s of seedStories()) {
+    for (const s of seeds) {
       await saveStory(s);
     }
     return;
@@ -250,12 +374,12 @@ async function resetStories() {
 
   if (!localDb) return;
   localDb.run('DELETE FROM stories');
-  seedStories().forEach(upsertStoryLocal);
+  seeds.forEach(upsertStoryLocal);
   persist();
 }
 
 async function getConfig() {
-  if (mode === 'supabase' && sbClient) {
+  if (mode === 'supabase_pg' && sbClient) {
     const { data, error } = await sbClient
       .from('config')
       .select('value')
@@ -263,6 +387,17 @@ async function getConfig() {
       .maybeSingle();
     if (error || !data) return { ...DEFAULT_CONFIG };
     return { ...DEFAULT_CONFIG, ...(data.value || {}) };
+  }
+
+  if (mode === 'supabase_storage' && sbClient) {
+    try {
+      const { data, error } = await sbClient.storage.from('fun-media').download('db/config.json');
+      if (error || !data) return { ...DEFAULT_CONFIG };
+      const text = await data.text();
+      return { ...DEFAULT_CONFIG, ...JSON.parse(text) };
+    } catch {
+      return { ...DEFAULT_CONFIG };
+    }
   }
 
   if (mode === 'turso' && tursoClient) {
@@ -289,12 +424,21 @@ async function saveConfig(cfg) {
     clean[k] = cfg[k] !== undefined ? cfg[k] : DEFAULT_CONFIG[k];
   }
 
-  if (mode === 'supabase' && sbClient) {
+  if (mode === 'supabase_pg' && sbClient) {
     const { error } = await sbClient.from('config').upsert({
       key: 'board',
       value: clean
     }, { onConflict: 'key' });
     if (error) throw new Error(error.message);
+    return clean;
+  }
+
+  if (mode === 'supabase_storage' && sbClient) {
+    await sbClient.storage.from('fun-media').upload('db/config.json', JSON.stringify(clean, null, 2), {
+      contentType: 'application/json',
+      cacheControl: '0',
+      upsert: true
+    });
     return clean;
   }
 
@@ -315,5 +459,6 @@ async function saveConfig(cfg) {
 
 module.exports = {
   DATA_DIR, DB_FILE, UPLOADS_DIR,
-  open, saveStory, getAllStories, getStory, deleteStory, resetStories, getConfig, saveConfig
+  open, saveStory, getAllStories, getStory, deleteStory, resetStories, getConfig, saveConfig,
+  uploadMediaToSupabase
 };

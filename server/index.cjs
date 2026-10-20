@@ -43,8 +43,7 @@ const EXT = {
 // En Vercel serverless, se conserva en la base de datos Turso para que todos los usuarios tengan acceso sin depender de disco local.
 function externalizeMedia(story, field) {
   const value = story[field];
-  if (typeof value !== 'string' || !value.startsWith('data:')) return;
-  if (process.env.VERCEL) return; // En Vercel se almacena directo en la base de datos
+  if (process.env.VERCEL || process.env.SUPABASE_URL || process.env.SUPABASE_KEY) return;
   try {
     const m = /^data:([\w/+.-]+)(?:;[^,]*)?;base64,(.*)$/s.exec(value);
     if (!m) { delete story[field]; return; }
