@@ -1,4 +1,5 @@
-// Entry point de Serverless Function para Vercel
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const { createApp } = require('../server/index.cjs');
 const db = require('../server/db.cjs');
 
@@ -12,7 +13,7 @@ async function getApp() {
   return appInstance;
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   const app = await getApp();
   return app(req, res);
-};
+}
