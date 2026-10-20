@@ -22,6 +22,7 @@
     "vite": "^8.0.12"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "canvas-confetti": "^1.9.4",
     "dom-to-image-more": "^3.7.2",
     "express": "^4.21.2",

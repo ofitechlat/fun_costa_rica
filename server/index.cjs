@@ -39,20 +39,27 @@ const EXT = {
   'video/webm': 'webm', 'video/mp4': 'mp4', 'video/quicktime': 'mov'
 };
 
-// Convierte data URLs (imágenes/videos en base64) en archivos dentro de data/uploads.
+// Convierte data URLs (imágenes/videos en base64) en archivos dentro de data/uploads (en servidores locales/Namecheap).
+// En Vercel serverless, se conserva en la base de datos Turso para que todos los usuarios tengan acceso sin depender de disco local.
 function externalizeMedia(story, field) {
   const value = story[field];
   if (typeof value !== 'string' || !value.startsWith('data:')) return;
-  const m = /^data:([\w/+.-]+)(?:;[^,]*)?;base64,(.*)$/s.exec(value);
-  if (!m) { delete story[field]; return; }
-  const ext = EXT[m[1]] || 'bin';
-  const safeId = String(story.id).replace(/[^\w-]/g, '_');
-  const file = `${safeId}-${field}-${Date.now()}.${ext}`;
-  fs.writeFileSync(path.join(db.UPLOADS_DIR, file), Buffer.from(m[2], 'base64'));
-  story[field] = '/uploads/' + file;
+  if (process.env.VERCEL) return; // En Vercel se almacena directo en la base de datos
+  try {
+    const m = /^data:([\w/+.-]+)(?:;[^,]*)?;base64,(.*)$/s.exec(value);
+    if (!m) { delete story[field]; return; }
+    const ext = EXT[m[1]] || 'bin';
+    const safeId = String(story.id).replace(/[^\w-]/g, '_');
+    const file = `${safeId}-${field}-${Date.now()}.${ext}`;
+    fs.writeFileSync(path.join(db.UPLOADS_DIR, file), Buffer.from(m[2], 'base64'));
+    story[field] = '/uploads/' + file;
+  } catch (err) {
+    console.warn('No se pudo escribir archivo en disco, se mantiene en base de datos:', err.message);
+  }
 }
 
 function removeUploads(story) {
+  if (process.env.VERCEL) return;
   for (const f of [story && story.photoUrl, story && story.videoUrl]) {
     if (typeof f === 'string' && f.startsWith('/uploads/')) {
       const p = path.join(db.UPLOADS_DIR, path.basename(f));
@@ -63,7 +70,7 @@ function removeUploads(story) {
 
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : undefined);
 
-function sanitizeStory(body, admin, existing) {
+function sanitizeStory(body, admin, existing, autoApprove = true) {
   const author = body.author || {};
   const story = {
     id: existing ? existing.id : (admin && typeof body.id === 'string' && body.id ? body.id : 'story-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex')),
@@ -92,7 +99,7 @@ function sanitizeStory(body, admin, existing) {
     story.likes = Number.isFinite(Number(body.likes)) ? Number(body.likes) : 1;
     story.featured = !!body.featured;
   } else {
-    story.status = existing ? existing.status : (db.getConfig().autoApprove ? 'approved' : 'pending');
+    story.status = existing ? existing.status : (autoApprove ? 'approved' : 'pending');
     story.likes = existing ? existing.likes : 1;
     story.featured = existing ? existing.featured : false;
   }
@@ -116,39 +123,76 @@ function createApp() {
     res.status(401).json({ error: 'Credenciales incorrectas' });
   });
 
-  app.get('/api/config', (_req, res) => res.json(db.getConfig()));
-  app.put('/api/config', requireAdmin, (req, res) => res.json(db.saveConfig(req.body || {})));
-
-  app.get('/api/stories', (req, res) => {
-    const all = db.getAllStories();
-    res.json(isAdmin(req) ? all : all.filter(s => s.status === 'approved'));
+  app.get('/api/config', async (_req, res) => {
+    try {
+      res.json(await db.getConfig());
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
-  app.post('/api/stories', (req, res) => {
-    const story = sanitizeStory(req.body || {}, isAdmin(req));
-    db.saveStory(story);
-    res.status(201).json(story);
+  app.put('/api/config', requireAdmin, async (req, res) => {
+    try {
+      res.json(await db.saveConfig(req.body || {}));
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
-  app.put('/api/stories/:id', (req, res) => {
-    const existing = db.getStory(req.params.id);
-    const admin = isAdmin(req);
-    const story = sanitizeStory({ ...(req.body || {}), id: req.params.id }, admin, existing || undefined);
-    if (!existing) story.id = req.params.id;
-    db.saveStory(story);
-    res.json(story);
+  app.get('/api/stories', async (req, res) => {
+    try {
+      const all = await db.getAllStories();
+      res.json(isAdmin(req) ? all : all.filter(s => s.status === 'approved'));
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
-  app.delete('/api/stories/:id', requireAdmin, (req, res) => {
-    removeUploads(db.getStory(req.params.id));
-    db.deleteStory(req.params.id);
-    res.json({ ok: true });
+  app.post('/api/stories', async (req, res) => {
+    try {
+      const cfg = await db.getConfig();
+      const story = sanitizeStory(req.body || {}, isAdmin(req), undefined, cfg.autoApprove);
+      await db.saveStory(story);
+      res.status(201).json(story);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
-  app.post('/api/admin/reset', requireAdmin, (_req, res) => {
-    db.getAllStories().forEach(removeUploads);
-    db.resetStories();
-    res.json({ ok: true });
+  app.put('/api/stories/:id', async (req, res) => {
+    try {
+      const existing = await db.getStory(req.params.id);
+      const cfg = await db.getConfig();
+      const admin = isAdmin(req);
+      const story = sanitizeStory({ ...(req.body || {}), id: req.params.id }, admin, existing || undefined, cfg.autoApprove);
+      if (!existing) story.id = req.params.id;
+      await db.saveStory(story);
+      res.json(story);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/stories/:id', requireAdmin, async (req, res) => {
+    try {
+      const existing = await db.getStory(req.params.id);
+      removeUploads(existing);
+      await db.deleteStory(req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/admin/reset', requireAdmin, async (_req, res) => {
+    try {
+      const all = await db.getAllStories();
+      all.forEach(removeUploads);
+      await db.resetStories();
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
