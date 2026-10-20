@@ -7,11 +7,11 @@ const db = require('./db.cjs');
 
 const ADMIN_USER = process.env.ADMIN_USER || 'funcr';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'funcr123';
-const SECRET = process.env.SESSION_SECRET || crypto.createHash('sha256').update('fun-cr|' + ADMIN_PASS).digest('hex');
+const SECRET = process.env.SESSION_SECRET || 'fun-costa-rica-admin-secret-2026';
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 
-const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('hex');
+const sign = (v) => crypto.createHmac('sha256', SECRET).update(String(v)).digest('hex');
 
 function makeToken() {
   const exp = String(Date.now() + TOKEN_TTL_MS);

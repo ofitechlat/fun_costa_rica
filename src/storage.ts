@@ -334,18 +334,25 @@ class StorageManager {
   }
 
   async deleteStory(id: string): Promise<void> {
+    let apiError: Error | null = null;
     try {
       await this.api('/api/stories/' + encodeURIComponent(id), { method: 'DELETE' });
-    } catch (err) {
-      console.warn('Error eliminando en API:', err);
+    } catch (err: any) {
+      console.error('Error eliminando en API (/api/stories):', err);
+      apiError = err;
     }
+
     await this.idb();
-    return new Promise((resolve, reject) => {
-      if (!this.db) return reject(new Error('DB not initialized'));
+    await new Promise<void>((resolve, reject) => {
+      if (!this.db) return resolve();
       const req = this.db.transaction(STORE_STORIES, 'readwrite').objectStore(STORE_STORIES).delete(id);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
+
+    if (apiError) {
+      throw apiError;
+    }
   }
 
   async resetSeedData(): Promise<void> {

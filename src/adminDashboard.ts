@@ -520,9 +520,13 @@ export class AdminDashboard {
           this.onStoriesChanged?.();
         } else if (action === 'delete') {
           if (confirm(`¿Eliminar la historia "${story.title}"?`)) {
-            await storage.deleteStory(story.id);
-            this.render();
-            this.onStoriesChanged?.();
+            try {
+              await storage.deleteStory(story.id);
+              await this.render();
+              this.onStoriesChanged?.();
+            } catch (err: any) {
+              alert('Error al eliminar la historia: ' + (err.message || err));
+            }
           }
         }
       });
