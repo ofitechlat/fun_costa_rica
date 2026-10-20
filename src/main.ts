@@ -232,6 +232,64 @@ window.addEventListener('load', () => {
   }
 });
 
+// Lateral Zoom Dock Controller
+function setupZoomController() {
+  const btnZoomIn = document.getElementById('btn-zoom-in');
+  const btnZoomOut = document.getElementById('btn-zoom-out');
+  const btnZoomReset = document.getElementById('btn-zoom-reset');
+  const zoomLabel = document.getElementById('zoom-value-label');
+
+  const STORAGE_KEY = 'fun_zoom_percent';
+  const MIN_ZOOM = 55;
+  const MAX_ZOOM = 130;
+  const STEP = 5;
+
+  // En pantallas móviles / pequeñas, el zoom inicial se reduce a 85% para evitar "mucho zoom"
+  const isMobile = window.innerWidth <= 768;
+  const defaultZoom = isMobile ? 85 : 100;
+
+  const saved = localStorage.getItem(STORAGE_KEY);
+  let currentZoom = saved !== null ? Number(saved) : defaultZoom;
+  if (!Number.isFinite(currentZoom) || currentZoom < MIN_ZOOM || currentZoom > MAX_ZOOM) {
+    currentZoom = defaultZoom;
+  }
+
+  function applyZoom(val: number) {
+    currentZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(val)));
+    localStorage.setItem(STORAGE_KEY, currentZoom.toString());
+
+    const scale = currentZoom / 100;
+    (document.body.style as any).zoom = scale.toString();
+    document.documentElement.style.setProperty('--app-zoom', scale.toString());
+
+    if (zoomLabel) {
+      zoomLabel.textContent = `${currentZoom}%`;
+    }
+
+    // Notifica cambio de dimensiones para que la pizarra y canvas reajusten sus límites
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  btnZoomIn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    applyZoom(currentZoom + STEP);
+  });
+
+  btnZoomOut?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    applyZoom(currentZoom - STEP);
+  });
+
+  btnZoomReset?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Alterna entre 85% y 100% al tocar el indicador
+    const target = currentZoom === 100 ? 85 : 100;
+    applyZoom(target);
+  });
+
+  applyZoom(currentZoom);
+}
+
 // App Startup
 async function initApp() {
   // Detecta servidor (API + SQLite) o modo local y sincroniza la configuración.
@@ -239,6 +297,7 @@ async function initApp() {
   const initialConfig = storage.getConfig();
   boardEngine.updateConfig(initialConfig);
   updateToolbarState(initialConfig);
+  setupZoomController();
   await refreshBoard();
   console.log('Fuckup Nights San José Interactive Board Loaded');
 }

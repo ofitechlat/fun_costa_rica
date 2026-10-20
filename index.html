@@ -155,6 +155,16 @@
     <div class="modal-backdrop" id="modal-meme-picker">
       <!-- Injected via MemePickerModal -->
     </div>
+
+    <!-- DOCK LATERAL DE CONTROL DE ZOOM (DERECHA) -->
+    <aside class="lateral-zoom-dock" id="lateral-zoom-dock" aria-label="Control de Zoom de Pantalla">
+      <button type="button" class="btn-zoom-step" id="btn-zoom-in" title="Aumentar zoom (+5%)" aria-label="Aumentar zoom">+</button>
+      <button type="button" class="btn-zoom-indicator" id="btn-zoom-reset" title="Restablecer o alternar zoom (85% / 100%)" aria-label="Restablecer o alternar zoom">
+        <span class="zoom-icon">🔎</span>
+        <span class="zoom-value" id="zoom-value-label">100%</span>
+      </button>
+      <button type="button" class="btn-zoom-step" id="btn-zoom-out" title="Reducir zoom (-5%)" aria-label="Reducir zoom">−</button>
+    </aside>
   </div>
 
   <script type="module" src="/src/main.ts"></script>
