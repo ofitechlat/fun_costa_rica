@@ -10,7 +10,7 @@ const { seedStories, DEFAULT_CONFIG } = require('./seed.cjs');
 const TURSO_URL = process.env.TURSO_DATABASE_URL;
 const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.DATA_DIR || (process.env.VERCEL ? '/tmp' : path.join(__dirname, '..', 'data'));
 const DB_FILE = path.join(DATA_DIR, 'fun.db');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
